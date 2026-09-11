@@ -137,10 +137,35 @@ ratchet verify                     standing integrity audit
 
 - `--backend fixture --fixtures <dir>` — replays recorded turns. Offline, deterministic; this
   is what the tests and the demo use.
+- `--backend grok` — xAI, via its OpenAI-compatible API. Needs `XAI_API_KEY`.
+- `--backend openai` — same adapter, different preset. Needs `OPENAI_API_KEY`.
 - `--backend claude-cli` — runs each role as a headless `claude -p` turn inside its staged
   directory.
 
 Adding a backend is one class with a `run(role, prompt, stage)` method.
+
+### Running it against Grok
+
+```bash
+export XAI_API_KEY=...
+ratchet --root ./work init
+ratchet --root ./work --backend grok author "<what you want built>"
+$EDITOR work/spec/*.feature          # this is the review gate; it is the cheap one
+ratchet --root ./work approve --by you@example.com
+ratchet --root ./work --backend grok steps
+ratchet --root ./work --backend grok build --max-turns 8
+ratchet --root ./work verify
+```
+
+`--model` overrides the default (`grok-4`); if that name is wrong the error lists what your key
+can actually see. `--base-url` points the same adapter at any other OpenAI-compatible endpoint.
+
+The model works through four scoped tools — `list_files`, `read_file`, `write_file`, `done` —
+rather than a shell. Every path is resolved inside the stage first: absolute paths are refused
+outright rather than reinterpreted, traversal is refused, and any symlinked component is
+refused. A refusal goes back to the model as a tool result, so it can correct course instead of
+crashing the turn. That sandbox is the first of the three layers, not a replacement for the
+workspace guard, which still hashes and rolls back around every turn.
 
 ## What this prototype does and does not prove
 
@@ -157,9 +182,12 @@ Demonstrated, end to end, in `examples/invoice/demo.sh` and the 37 tests:
 
 Not yet addressed, in rough order of how much they matter:
 
-0. **This has never run against a live model.** Every demo uses recorded fixtures. The
-   `claude-cli` backend is written but unexercised — it needs an API key and a real run before
-   any claim about it is worth making.
+0. **This has never run against a live model.** The Grok/OpenAI adapter is fully exercised —
+   the whole pipeline runs over real HTTP against a mock that speaks the xAI wire protocol
+   (`tests/mock_llm.py`), covering request construction, the tool loop, refusals, retries and
+   token accounting. But a mock cannot have judgement. Nothing here shows whether a real model
+   writes *good* Gherkin, whether the stepwright writes honest assertions, or how many turns a
+   real build takes. The `claude-cli` backend is written and entirely unexercised.
 1. **Gherkin's expressiveness ceiling.** Latency, cost, security posture, UI behaviour — Gherkin
    is bad at all of them. There is currently no escape hatch, which means a spec written only in
    Gherkin is a lie by omission.

@@ -101,11 +101,18 @@ _ROLE_SYSTEM = {
 }
 
 
-def make_backend(spec: str, fixtures: Path | None = None) -> Backend:
+BACKENDS = ("fixture", "claude-cli", "grok", "openai")
+
+
+def make_backend(spec: str, fixtures: Path | None = None, *, model: str | None = None,
+                 base_url: str | None = None) -> Backend:
     if spec == "fixture":
         if fixtures is None:
             raise ValueError("fixture backend requires a fixtures directory")
         return FixtureBackend(fixtures)
     if spec == "claude-cli":
-        return ClaudeCLIBackend()
-    raise ValueError(f"unknown backend {spec!r} (expected 'fixture' or 'claude-cli')")
+        return ClaudeCLIBackend(model=model)
+    if spec in ("grok", "openai"):
+        from .api_backend import OpenAICompatBackend
+        return OpenAICompatBackend.from_preset(spec, model=model, base_url=base_url)
+    raise ValueError(f"unknown backend {spec!r} (expected one of {', '.join(BACKENDS)})")

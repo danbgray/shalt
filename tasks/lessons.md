@@ -28,3 +28,18 @@ isolate, so `../../../steps` reached the real tests from inside the sandbox.
 6. "Absence of evidence" states must never round toward success: a scenario with no test is
    `pending`, never green, and removing a failing scenario must not raise the completion figure.
    Any progress metric gets asked "how would I game this?" before it ships.
+
+## 2026-09-11 — testing an API adapter without the API
+
+Could not reach the provider (no key, and the egress gateway 403s the host). Rather than stop at
+"blocked", built a mock that speaks the provider's wire protocol and ran the entire pipeline
+over real HTTP through it. That covers request construction, the tool loop, path refusals,
+retries, error surfacing and token accounting — everything except the model's judgement.
+
+7. When an external dependency is unreachable, mock at the *protocol* boundary, not at the
+   adapter boundary. Mocking the adapter tests nothing; mocking the wire protocol tests all of
+   my code and only leaves the other party's behaviour unproven.
+8. Say precisely what the mock does and does not establish. "Tested against Grok" would have
+   been a lie; "the plumbing is proven, the judgement is not" is the honest claim.
+9. A path sandbox must refuse, never silently reinterpret. `/etc/passwd` was being rewritten to
+   `<stage>/etc/passwd` — no escape, but it hid intent. Refuse and say why.

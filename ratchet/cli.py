@@ -7,7 +7,7 @@ import sys
 import time
 from pathlib import Path
 
-from .backends import make_backend
+from .backends import BACKENDS, make_backend
 from .integrity import IntegrityViolation, audit
 from .ledger import GREEN, PENDING, RED, STALE, ORPHAN, Ledger
 from .roles import run_role
@@ -26,6 +26,12 @@ def _c(s: str, k: str) -> str:
 
 def _root(args) -> Path:
     return Path(args.root).resolve()
+
+
+def _backend(args):
+    return make_backend(args.backend,
+                        Path(args.fixtures) if args.fixtures else None,
+                        model=args.model, base_url=args.base_url)
 
 
 def _ledger(root: Path) -> Ledger:
@@ -68,7 +74,7 @@ def cmd_init(args) -> int:
 
 def cmd_author(args) -> int:
     root = _root(args)
-    backend = make_backend(args.backend, Path(args.fixtures) if args.fixtures else None)
+    backend = _backend(args)
     prompt = (f"Translate this request into Gherkin feature files under spec/.\n\n"
               f"REQUEST:\n{args.request}\n\n"
               f"Write one .feature file per coherent capability. Cover the happy path, the "
@@ -129,7 +135,7 @@ def cmd_steps(args) -> int:
     if not led.spec_lock:
         print("spec is not approved yet -- run `ratchet approve` first", file=sys.stderr)
         return 1
-    backend = make_backend(args.backend, Path(args.fixtures) if args.fixtures else None)
+    backend = _backend(args)
     prompt = (
         "Write pytest-bdd step definitions under steps/ for every scenario in spec/.\n\n"
         "Rules:\n"
@@ -179,7 +185,7 @@ def cmd_build(args) -> int:
     if not led.spec_lock:
         print("spec is not approved yet -- run `ratchet approve` first", file=sys.stderr)
         return 1
-    backend = make_backend(args.backend, Path(args.fixtures) if args.fixtures else None)
+    backend = _backend(args)
     held = holdout_rids(features)
     live = [rid for rid, e in led.entries.items() if e.status != ORPHAN]
     visible = [rid for rid in live if rid not in held]
@@ -295,8 +301,10 @@ def _print_status(led: Ledger, root: Path) -> None:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="ratchet", description="BDD for agentic workflows")
     p.add_argument("--root", default=".", help="workspace root")
-    p.add_argument("--backend", default="fixture", choices=["fixture", "claude-cli"])
+    p.add_argument("--backend", default="fixture", choices=list(BACKENDS))
     p.add_argument("--fixtures", default=None, help="fixture directory (fixture backend)")
+    p.add_argument("--model", default=None, help="override the backend's default model")
+    p.add_argument("--base-url", default=None, help="override the API base url")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("init").set_defaults(fn=cmd_init)
@@ -314,7 +322,11 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("verify").set_defaults(fn=cmd_verify)
 
     args = p.parse_args(argv)
-    return args.fn(args)
+    try:
+        return args.fn(args)
+    except (RuntimeError, ValueError) as e:
+        print(_c(f"error: {e}", "red"), file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

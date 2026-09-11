@@ -50,6 +50,14 @@ let deleting failing scenarios show 100%, an approval lock that stored counts bu
 hashes and so verified nothing, line-based Gherkin manipulation that mis-stamped and leaked
 around docstrings, and basename collisions in scenario-to-test binding. See `tasks/lessons.md`.
 
+**Grok backend (follow-up).** Added an OpenAI-compatible adapter, so one class covers Grok,
+OpenAI, and any other endpoint on that protocol. A live run is impossible from this environment
+(no key; the egress gateway returns 403 to CONNECT for `api.x.ai`), so the adapter is proven
+against a mock that speaks the xAI wire protocol: the full author → approve → steps → build
+pipeline runs over real HTTP, and the workspace guard still rejects an API-driven role that
+writes outside its zone. 60 tests. What remains unproven is the model's judgement, not the
+plumbing.
+
 **Known gaps, in priority order:** never run against a live model (fixtures only); no escape
 hatch for non-functional requirements; the stepwright is unverified (mutation testing over step
 definitions is the obvious next move); no cost or turn accounting; Python-only runner.
