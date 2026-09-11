@@ -12,7 +12,7 @@ from .integrity import IntegrityViolation, audit
 from .ledger import GREEN, PENDING, RED, STALE, ORPHAN, Ledger
 from .roles import run_role
 from .runner import failure_digest, harness_report, run_suite
-from .spec import holdout_rids, load_specs, stamp_rids
+from .spec import SpecParseError, holdout_rids, load_specs, stamp_rids
 
 LEDGER_PATH = ".ratchet/ledger.json"
 
@@ -33,7 +33,13 @@ def _ledger(root: Path) -> Ledger:
 
 
 def _sync(root: Path) -> tuple[Ledger, list]:
-    features = load_specs(root / "spec")
+    try:
+        features = load_specs(root / "spec")
+    except SpecParseError as e:
+        print(_c("spec does not parse:", "red"), file=sys.stderr)
+        for f, msg in e.errors.items():
+            print(f"  {f}: {msg}", file=sys.stderr)
+        raise SystemExit(4)
     led = _ledger(root)
     led.sync_spec(features)
     led.save(root / LEDGER_PATH)
@@ -68,7 +74,11 @@ def cmd_author(args) -> int:
               f"Write one .feature file per coherent capability. Cover the happy path, the "
               f"edge cases a reviewer would ask about, and the failure modes. Use concrete "
               f"example values.")
-    res = run_role(root, "author", prompt, backend)
+    try:
+        res = run_role(root, "author", prompt, backend)
+    except IntegrityViolation as e:
+        print(_c(f"turn rejected: {e}", "red"), file=sys.stderr)
+        return 2
     print(f"author wrote {len(res.wrote)} file(s):")
     for w in res.wrote:
         print(f"  {w}")
@@ -102,6 +112,10 @@ def cmd_approve(args) -> int:
         "approved_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "scenario_count": sum(len(f.scenarios) for f in features),
         "files": {f.file: len(f.scenarios) for f in features},
+        # the content of what was signed off, so a later edit is detectable rather than
+        # merely counted
+        "scenario_hashes": {s.rid: s.spec_hash(f.background)
+                            for f in features for s in f.scenarios if s.rid},
     }
     led.save(root / LEDGER_PATH)
     print(f"\napproved by {args.by}; {len(minted)} new scenario id(s) stamped into the spec.")
@@ -167,7 +181,8 @@ def cmd_build(args) -> int:
         return 1
     backend = make_backend(args.backend, Path(args.fixtures) if args.fixtures else None)
     held = holdout_rids(features)
-    visible = [rid for rid in led.entries if rid not in held]
+    live = [rid for rid, e in led.entries.items() if e.status != ORPHAN]
+    visible = [rid for rid in live if rid not in held]
     if held:
         print(_c(f"{len(held)} scenario(s) held out from the implementer", "dim"))
 
@@ -184,7 +199,8 @@ def cmd_build(args) -> int:
         print(f"\nturn {turn}: {len(visible) - len(red_visible)}/{len(visible)} visible green")
         if not red_visible:
             break
-        digest = run.get("collection_error") or failure_digest(run)
+        # never show the implementer a held-out scenario's failure detail
+        digest = run.get("collection_error") or failure_digest(run, allowed=set(visible))
         wanted = "\n".join(f"- {led.entries[r].name} ({r}): {led.entries[r].status}"
                            for r in red_visible[:12])
         prompt = (
@@ -268,6 +284,9 @@ def _print_status(led: Ledger, root: Path) -> None:
     bar = _c("#" * filled, "green") + _c("-" * (bar_w - filled), "dim")
     print(f"\n[{bar}] {s['completion_pct']}%  "
           f"{s[GREEN]} green / {s[RED]} red / {s[STALE]} stale / {s[PENDING]} pending")
+    if s[ORPHAN]:
+        print(_c(f"{s[ORPHAN]} scenario(s) removed from the spec are excluded from that "
+                 f"figure -- run `ratchet verify`", "yellow"))
     if led.regressions:
         print(_c(f"{len(led.regressions)} regression(s) recorded in the ledger", "yellow"))
     print(_c(f"ledger: {root / LEDGER_PATH}", "dim"))

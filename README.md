@@ -36,6 +36,20 @@ and the failing test output, and has to implement the behaviour rather than the 
 A turn that writes outside its zone is **rejected wholesale and rolled back**. Nothing it
 produced is kept.
 
+Isolation is enforced in three layers, because each one alone is defeatable:
+
+1. **The stage lives outside the workspace.** Relative traversal out of it (`../../../steps`)
+   lands in a scratch directory, not in the real spec or tests.
+2. **The stage is scanned** for files outside the role's write zones, and for symlinks
+   anywhere — a symlink inside an allowed zone is a write to wherever it points.
+3. **The real workspace is hashed before and after** the turn, so a backend that writes by
+   absolute path is still caught, and protected zones are restored from backup. The ledger
+   itself is protected on every turn; no role may write it.
+
+`tests/test_isolation.py` is the record of this: each test there is an escape that worked
+against an earlier version — relative traversal, absolute writes, symlinked directories,
+symlinked files masquerading as source modules, and rewriting the ledger to forge an approval.
+
 ```
 turn 1 REJECTED -- role 'implementer' wrote outside its zone -> steps: steps/test_invoice.py
   nothing from this turn was kept; the spec and tests are untouched.
@@ -130,16 +144,22 @@ Adding a backend is one class with a `run(role, prompt, stage)` method.
 
 ## What this prototype does and does not prove
 
-Demonstrated, end to end, in `examples/invoice/demo.sh`:
+Demonstrated, end to end, in `examples/invoice/demo.sh` and the 37 tests:
 
 - the pipeline runs: prompt → Gherkin → human approval → step definitions → implementation → green
-- an implementer that edits the tests is caught and rolled back
+- an implementer that edits the tests is caught and rolled back — by five different routes
 - an implementer that overfits to visible examples is caught by holdouts
+- held-out scenarios' failure text is never shown to the implementer
 - editing an approved scenario stales exactly that scenario's green and no other
-- breaking a passing scenario is recorded as a named regression
+- `ratchet verify` detects any edit, addition or deletion made since sign-off
+- breaking a passing scenario, or deleting the test that proved it, is recorded as a regression
+- deleting failing scenarios does not silently inflate the completion figure
 
 Not yet addressed, in rough order of how much they matter:
 
+0. **This has never run against a live model.** Every demo uses recorded fixtures. The
+   `claude-cli` backend is written but unexercised — it needs an API key and a real run before
+   any claim about it is worth making.
 1. **Gherkin's expressiveness ceiling.** Latency, cost, security posture, UI behaviour — Gherkin
    is bad at all of them. There is currently no escape hatch, which means a spec written only in
    Gherkin is a lie by omission.

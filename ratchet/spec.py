@@ -22,6 +22,7 @@ from gherkin.parser import Parser
 from gherkin.token_scanner import TokenScanner
 
 RID_PREFIX = "@rid:"
+HOLDOUT_TAG = "@holdout"
 RID_RE = re.compile(r"@rid:(S-[0-9a-f]{8})")
 
 
@@ -70,6 +71,17 @@ class Scenario:
     feature_name: str
     feature_file: str
     line: int
+    tag_lines: list[int] = field(default_factory=list)
+    rid_count: int = 0
+
+    @property
+    def block_start(self) -> int:
+        """First line of this scenario, including its tag block. 1-indexed."""
+        return min(self.tag_lines) if self.tag_lines else self.line
+
+    @property
+    def is_holdout(self) -> bool:
+        return any(t == HOLDOUT_TAG for t in self.tags)
 
     @property
     def is_outline(self) -> bool:
@@ -99,23 +111,44 @@ class Feature:
     tags: list[str]
     background: list[str] = field(default_factory=list)
     scenarios: list[Scenario] = field(default_factory=list)
+    rule_lines: list[int] = field(default_factory=list)
+
+    def blocks(self, total_lines: int) -> list[tuple[Scenario, int, int]]:
+        """(scenario, first line, line after last) -- 1-indexed, end exclusive.
+
+        Boundaries come from the parser, not from matching text, so a `Scenario:` or a `@tag`
+        written inside a docstring or a table cell cannot be mistaken for structure.
+        """
+        anchors = sorted({sc.block_start for sc in self.scenarios} | set(self.rule_lines))
+        out = []
+        for sc in self.scenarios:
+            start = sc.block_start
+            nxt = [a for a in anchors if a > start]
+            out.append((sc, start, min(nxt) if nxt else total_lines + 1))
+        return out
 
 
 def _walk_children(children: list[dict], feature_name: str, rel: str,
-                   background: list[str], scenarios: list[Scenario]) -> None:
+                   background: list[str], scenarios: list[Scenario],
+                   rule_lines: list[int]) -> None:
     """Flatten Rule blocks; collect background steps and scenarios."""
     for child in children:
         if "background" in child:
             background.extend(_step_lines(child["background"].get("steps", [])))
         elif "rule" in child:
+            rule_lines.append(child["rule"].get("location", {}).get("line", 0))
             _walk_children(child["rule"].get("children", []), feature_name, rel,
-                           background, scenarios)
+                           background, scenarios, rule_lines)
         elif "scenario" in child:
             sc = child["scenario"]
+            rids = [m.group(1) for t in sc.get("tags", [])
+                    if (m := RID_RE.fullmatch(t["name"]))]
             scenarios.append(
                 Scenario(
-                    rid=next((m.group(1) for t in sc.get("tags", [])
-                              if (m := RID_RE.fullmatch(t["name"]))), None),
+                    rid=rids[0] if rids else None,
+                    rid_count=len(rids),
+                    tag_lines=[t.get("location", {}).get("line", 0)
+                               for t in sc.get("tags", [])],
                     name=sc["name"],
                     keyword=sc["keyword"],
                     tags=[t["name"] for t in sc.get("tags", [])],
@@ -129,68 +162,102 @@ def _walk_children(children: list[dict], feature_name: str, rel: str,
 
 
 def parse_feature(path: Path, root: Path) -> Feature | None:
-    doc = Parser().parse(TokenScanner(path.read_text(encoding="utf-8")))
+    return parse_text(path.read_text(encoding="utf-8"), str(path.relative_to(root)))
+
+
+def parse_text(source: str, rel: str) -> Feature | None:
+    doc = Parser().parse(TokenScanner(source))
     feat = doc.get("feature")
     if not feat:
         return None
-    rel = str(path.relative_to(root))
     background: list[str] = []
     scenarios: list[Scenario] = []
-    _walk_children(feat.get("children", []), feat["name"], rel, background, scenarios)
+    rule_lines: list[int] = []
+    _walk_children(feat.get("children", []), feat["name"], rel, background, scenarios,
+                   rule_lines)
     return Feature(
         name=feat["name"],
         file=rel,
         tags=[t["name"] for t in feat.get("tags", [])],
         background=background,
         scenarios=scenarios,
+        rule_lines=rule_lines,
     )
 
 
-def load_specs(spec_dir: Path, root: Path | None = None) -> list[Feature]:
+class SpecParseError(Exception):
+    def __init__(self, errors: dict[str, str]):
+        self.errors = errors
+        super().__init__("; ".join(f"{k}: {v}" for k, v in errors.items()))
+
+
+def load_specs(spec_dir: Path, root: Path | None = None,
+               strict: bool = True) -> list[Feature]:
+    """Parse every feature file. A malformed file raises SpecParseError naming the file
+    rather than surfacing a raw parser traceback from whichever command touched it."""
     root = root or spec_dir
-    out = []
+    out, errors = [], {}
     for p in sorted(spec_dir.rglob("*.feature")):
-        f = parse_feature(p, root)
+        try:
+            f = parse_feature(p, root)
+        except Exception as exc:  # gherkin raises a composite parser exception
+            errors[str(p.relative_to(root))] = str(exc).splitlines()[0][:200]
+            continue
         if f:
             out.append(f)
+    if errors and strict:
+        raise SpecParseError(errors)
     return out
 
 
 def stamp_rids(spec_dir: Path) -> dict[str, str]:
-    """Give every unstamped scenario a durable rid, in place. Returns {rid: scenario name}."""
+    """Give every unstamped scenario a durable rid, in place.
+
+    Insertion points come from the parser, so a `Scenario:` line inside a docstring or a table
+    cell is never mistaken for a scenario. Ids are unique across the whole spec directory, not
+    just within one file, and the file's original line endings are preserved.
+    """
     minted: dict[str, str] = {}
-    for path in sorted(spec_dir.rglob("*.feature")):
-        lines = path.read_text(encoding="utf-8").splitlines()
-        out: list[str] = []
-        existing = set(RID_RE.findall("\n".join(lines)))
-        for i, line in enumerate(lines):
-            stripped = line.strip()
-            is_scenario = re.match(r"^(Scenario Outline|Scenario Template|Scenario|Example):",
-                                   stripped)
-            if is_scenario:
-                # Look back over the contiguous tag block directly above.
-                j = len(out) - 1
-                tagline = None
-                while j >= 0 and out[j].strip().startswith("@"):
-                    if RID_RE.search(out[j]):
-                        tagline = -1  # already stamped
-                        break
-                    tagline = j
-                    j -= 1
-                if tagline != -1:
-                    rid = new_rid()
-                    while rid in existing:
-                        rid = new_rid()
-                    existing.add(rid)
-                    minted[rid] = stripped.split(":", 1)[1].strip()
-                    indent = line[: len(line) - len(line.lstrip())]
-                    if tagline is None:
-                        out.append(f"{indent}{RID_PREFIX}{rid}")
-                    else:
-                        out[tagline] = out[tagline].rstrip() + f" {RID_PREFIX}{rid}"
-            out.append(line)
-        path.write_text("\n".join(out) + "\n", encoding="utf-8")
+    paths = sorted(spec_dir.rglob("*.feature"))
+    existing: set[str] = set()
+    for path in paths:
+        existing |= set(RID_RE.findall(path.read_text(encoding="utf-8")))
+    for path in paths:
+        raw = path.read_bytes()  # read_text normalises newlines; we must not lose CRLF
+        newline = "\r\n" if b"\r\n" in raw else "\n"
+        text = raw.decode("utf-8")
+        lines = text.splitlines()
+        feat = parse_text(text, str(path.relative_to(spec_dir)))
+        if feat is None:
+            continue
+        # bottom-up, so line numbers of not-yet-processed scenarios stay valid
+        for sc in sorted(feat.scenarios, key=lambda x: x.block_start, reverse=True):
+            if sc.rid:
+                continue
+            rid = new_rid()
+            while rid in existing:
+                rid = new_rid()
+            existing.add(rid)
+            minted[rid] = sc.name
+            idx = sc.block_start - 1
+            line = lines[idx]
+            indent = line[: len(line) - len(line.lstrip())]
+            lines.insert(idx, f"{indent}{RID_PREFIX}{rid}")
+        path.write_bytes((newline.join(lines) + newline).encode("utf-8"))
     return minted
+
+
+def duplicate_rids(features: list[Feature]) -> list[tuple[str, str]]:
+    """Scenarios carrying more than one @rid tag, plus any rid used twice."""
+    problems = [(f.file, s.name) for f in features for s in f.scenarios if s.rid_count > 1]
+    seen: dict[str, str] = {}
+    for f in features:
+        for s in f.scenarios:
+            if s.rid and s.rid in seen:
+                problems.append((f.file, f"{s.name} reuses id {s.rid} from {seen[s.rid]}"))
+            elif s.rid:
+                seen[s.rid] = s.name
+    return problems
 
 
 def index_scenarios(features: list[Feature]) -> dict[str, tuple[Feature, Scenario]]:
@@ -202,9 +269,6 @@ def index_scenarios(features: list[Feature]) -> dict[str, tuple[Feature, Scenari
     return idx
 
 
-HOLDOUT_TAG = "@holdout"
-
-
 def strip_holdouts(text: str) -> str:
     """Remove @holdout scenarios from feature-file text.
 
@@ -212,38 +276,20 @@ def strip_holdouts(text: str) -> str:
     to the implementer. If the visible scenarios go green while the held-out ones stay red, the
     implementer overfitted to the examples it could see rather than implementing the behaviour.
     The write guard stops test *tampering*; holdouts are the defence against test *overfitting*.
+
+    Line ranges come from the parser, so a docstring containing `@something` or `Scenario:`
+    cannot cut the deletion short and leak part of a held-out scenario.
     """
+    feat = parse_text(text, "<memory>")
+    newline = "\r\n" if "\r\n" in text else "\n"
     lines = text.splitlines()
-    out: list[str] = []
-    i = 0
-    scenario_re = re.compile(r"^(Scenario Outline|Scenario Template|Scenario|Example):")
-    while i < len(lines):
-        # gather a contiguous tag block
-        start = i
-        tags: list[str] = []
-        while i < len(lines) and lines[i].strip().startswith("@"):
-            tags.append(lines[i])
-            i += 1
-        if i < len(lines) and scenario_re.match(lines[i].strip()) and \
-                any(HOLDOUT_TAG in t for t in tags):
-            indent = len(lines[i]) - len(lines[i].lstrip())
-            i += 1
-            while i < len(lines):
-                nxt = lines[i]
-                s = nxt.strip()
-                if s and (len(nxt) - len(nxt.lstrip())) <= indent and \
-                        (scenario_re.match(s) or s.startswith("@") or
-                         s.startswith("Rule:") or s.startswith("Feature:")):
-                    break
-                i += 1
-            continue
-        out.extend(lines[start:i])
-        if i < len(lines):
-            out.append(lines[i])
-            i += 1
-    return "\n".join(out) + "\n"
+    if feat is None:
+        return text
+    ranges = [(start, end) for sc, start, end in feat.blocks(len(lines)) if sc.is_holdout]
+    for start, end in sorted(ranges, reverse=True):
+        del lines[start - 1:end - 1]
+    return newline.join(lines) + newline
 
 
 def holdout_rids(features: list[Feature]) -> set[str]:
-    return {s.rid for f in features for s in f.scenarios
-            if s.rid and HOLDOUT_TAG in s.tags}
+    return {s.rid for f in features for s in f.scenarios if s.rid and s.is_holdout}

@@ -9,7 +9,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-_STATE: dict = {"map": {}, "node_to_key": {}, "outcomes": {}, "report": None}
+_STATE: dict = {"map": {}, "node_to_key": {}, "outcomes": {}, "report": None,
+                "spec_dir": None}
 
 
 def pytest_addoption(parser):
@@ -27,16 +28,24 @@ def pytest_configure(config):
     _STATE["outcomes"] = {}
     if spec:
         from ratchet.spec import load_specs
-        spec_dir = Path(spec)
-        for f in load_specs(spec_dir):
+        spec_dir = Path(spec).resolve()
+        _STATE["spec_dir"] = spec_dir
+        for f in load_specs(spec_dir, strict=False):
             for s in f.scenarios:
                 if s.rid:
-                    _STATE["map"][(Path(f.file).name, s.name)] = s.rid
+                    # keyed on the path relative to spec/, so two features with the same
+                    # basename in different directories do not collide
+                    _STATE["map"][(f.file.replace("\\", "/"), s.name)] = s.rid
 
 
 def pytest_bdd_before_scenario(request, feature, scenario):
-    key = (Path(feature.filename).name, scenario.name)
-    _STATE["node_to_key"][request.node.nodeid] = key
+    spec_dir = _STATE.get("spec_dir")
+    fname = Path(feature.filename).resolve()
+    try:
+        rel = str(fname.relative_to(spec_dir)).replace("\\", "/") if spec_dir else fname.name
+    except ValueError:
+        rel = fname.name
+    _STATE["node_to_key"][request.node.nodeid] = (rel, scenario.name)
 
 
 def pytest_runtest_logreport(report):

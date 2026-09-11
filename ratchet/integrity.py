@@ -23,6 +23,10 @@ ZONES: dict[str, tuple[str, ...]] = {
 
 ALL_ZONES = ("spec", "steps", "contract", "src")
 
+# The ledger is the product. No role may write it, so it is protected on every turn regardless
+# of which zones the role owns.
+LEDGER_FILE = ".ratchet/ledger.json"
+
 # What each role is allowed to READ. Enforced by staging: the role runs in a directory that
 # physically contains only these zones, so isolation is not a matter of it choosing not to look.
 #   stepwright  sees the spec, and nothing of the implementation.
@@ -30,7 +34,7 @@ ALL_ZONES = ("spec", "steps", "contract", "src")
 #               it must satisfy -- so it has to implement the behaviour, not the assertions.
 READS: dict[str, tuple[str, ...]] = {
     "author": ("spec",),
-    "stepwright": ("spec",),
+    "stepwright": ("spec", "steps", "contract"),
     "implementer": ("spec", "contract", "src"),
 }
 
@@ -47,15 +51,35 @@ def file_hash(p: Path) -> str:
     return hashlib.sha256(p.read_bytes()).hexdigest()[:16]
 
 
+def iter_files(zdir: Path):
+    """Walk without following symlinks. Yields (path, is_symlink)."""
+    if not zdir.exists():
+        return
+    stack = [zdir]
+    while stack:
+        d = stack.pop()
+        try:
+            entries = sorted(d.iterdir())
+        except (NotADirectoryError, PermissionError, FileNotFoundError):
+            continue
+        for p in entries:
+            if "__pycache__" in p.parts:
+                continue
+            if p.is_symlink():
+                yield p, True
+            elif p.is_dir():
+                stack.append(p)
+            elif p.is_file():
+                yield p, False
+
+
 def snapshot(root: Path, zones: tuple[str, ...] = ALL_ZONES) -> dict[str, dict[str, str]]:
     snap: dict[str, dict[str, str]] = {}
     for z in zones:
-        zdir = root / z
         files: dict[str, str] = {}
-        if zdir.exists():
-            for p in sorted(zdir.rglob("*")):
-                if p.is_file() and "__pycache__" not in p.parts:
-                    files[str(p.relative_to(root))] = file_hash(p)
+        for p, is_link in iter_files(root / z):
+            rel = str(p.relative_to(root))
+            files[rel] = "symlink:" + str(p.readlink()) if is_link else file_hash(p)
         snap[z] = files
     return snap
 
@@ -86,6 +110,9 @@ class GuardedTurn:
 
     def __enter__(self) -> "GuardedTurn":
         self._before = snapshot(self.root)
+        led = self.root / LEDGER_FILE
+        self._ledger_before = file_hash(led) if led.exists() else None
+        self._ledger_bytes = led.read_bytes() if led.exists() else None
         if self.backup_dir.exists():
             shutil.rmtree(self.backup_dir)
         self.backup_dir.mkdir(parents=True, exist_ok=True)
@@ -98,16 +125,26 @@ class GuardedTurn:
 
     def __exit__(self, exc_type, exc, tb) -> bool:
         if exc_type is not None:
+            # the turn failed or was rejected upstream; put the protected zones back as found
+            self.restore()
             return False
         after = snapshot(self.root)
         d = diff(self._before, after)
         offences = {z: d.get(z, []) for z in self.protected if d.get(z)}
+        led = self.root / LEDGER_FILE
+        now_hash = file_hash(led) if led.exists() else None
+        if now_hash != self._ledger_before:
+            offences.setdefault("ledger", []).append(LEDGER_FILE)
         if offences:
             self.restore()
             raise IntegrityViolation(self.role, offences)
         return False
 
     def restore(self) -> None:
+        if self._ledger_bytes is not None:
+            led = self.root / LEDGER_FILE
+            led.parent.mkdir(parents=True, exist_ok=True)
+            led.write_bytes(self._ledger_bytes)
         for z in self.protected:
             tgt = self.root / z
             bak = self.backup_dir / z
@@ -119,7 +156,11 @@ class GuardedTurn:
 
 def audit(root: Path, ledger, features: list) -> list[str]:
     """Standing integrity checks that do not depend on a turn being in flight."""
+    from .spec import duplicate_rids
+
     problems: list[str] = []
+    for file, name in duplicate_rids(features):
+        problems.append(f"duplicate scenario id: {file} :: {name}")
     unstamped = [(f.file, s.name) for f in features for s in f.scenarios if not s.rid]
     for file, name in unstamped:
         problems.append(f"unstamped scenario (run `ratchet approve`): {file} :: {name}")
@@ -131,4 +172,22 @@ def audit(root: Path, ledger, features: list) -> list[str]:
     lock = ledger.spec_lock
     if not lock:
         problems.append("spec is not approved: no human sign-off recorded")
+        return problems
+    # the approved spec must still be the spec on disk
+    approved: dict[str, str] = lock.get("scenario_hashes", {})
+    if approved:
+        current = {s.rid: s.spec_hash(f.background)
+                   for f in features for s in f.scenarios if s.rid}
+        for rid, h in approved.items():
+            if rid not in current:
+                problems.append(f"approved scenario {rid} is no longer in the spec")
+            elif current[rid] != h:
+                name = next((s.name for f in features for s in f.scenarios
+                             if s.rid == rid), rid)
+                problems.append(f"scenario changed since approval, unapproved: {rid} {name}")
+        for rid in current:
+            if rid not in approved:
+                problems.append(f"scenario added since approval, unapproved: {rid}")
+    else:
+        problems.append("spec lock predates content hashing; re-run `ratchet approve`")
     return problems

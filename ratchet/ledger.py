@@ -66,8 +66,10 @@ class Ledger:
         raw = json.loads(path.read_text(encoding="utf-8"))
         if raw.get("schema") != SCHEMA:
             raise ValueError(f"unsupported ledger schema: {raw.get('schema')!r}")
+        known = set(Entry.__dataclass_fields__)
         return cls(
-            entries={k: Entry(**v) for k, v in raw.get("scenarios", {}).items()},
+            entries={k: Entry(**{f: v for f, v in e.items() if f in known})
+                     for k, e in raw.get("scenarios", {}).items()},
             spec_lock=raw.get("spec_lock", {}),
             regressions=raw.get("regressions", []),
         )
@@ -88,7 +90,7 @@ class Ledger:
     def sync_spec(self, features: list) -> dict[str, int]:
         """Reconcile the ledger against the current spec. Green that no longer matches
         its scenario's meaning becomes stale."""
-        stats = {"added": 0, "staled": 0, "orphaned": 0, "unchanged": 0}
+        stats = {"added": 0, "staled": 0, "orphaned": 0, "unchanged": 0, "restored": 0}
         seen: set[str] = set()
         for f in features:
             for s in f.scenarios:
@@ -106,6 +108,12 @@ class Ledger:
                     continue
                 e.name, e.feature, e.feature_file = s.name, f.name, f.file
                 e.tags = list(s.tags)
+                if e.status == ORPHAN:
+                    # orphan is not an absorbing state; a restored scenario must prove itself
+                    e.status = PENDING
+                    e.verified_spec_hash = ""
+                    e.record("restored_to_spec")
+                    stats["restored"] = stats.get("restored", 0) + 1
                 if e.spec_hash != h:
                     prev = e.status
                     e.spec_hash = h
@@ -152,8 +160,15 @@ class Ledger:
                     e.last_run_at = now
                     continue
                 # No test bound to this scenario. Never green.
-                if e.status in (GREEN, STALE, RED):
+                if e.status == GREEN:
+                    reg = {"at": now, "rid": rid, "name": e.name, "run": run_id,
+                           "detail": "the test that proved this scenario is gone"}
+                    self.regressions.append(reg)
+                    new_regressions.append(reg)
+                    e.record("REGRESSION", run=run_id, why="test_unbound")
+                elif e.status in (STALE, RED):
                     e.record("test_unbound", was=e.status)
+                e.verified_spec_hash = ""
                 e.status = PENDING
                 e.failure = "no test bound to this scenario"
                 continue

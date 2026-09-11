@@ -43,14 +43,21 @@ def harness_report(run: dict) -> str:
     return (run.get("stderr", "") or "")[-1800:] + "\n" + (run.get("stdout", "") or "")[-1800:]
 
 
-def failure_digest(run: dict, limit: int = 3) -> str:
-    """Compact failing-test context to hand to the implementer."""
+def failure_digest(run: dict, allowed: set[str] | None = None, limit: int = 3) -> str:
+    """Compact failing-test context to hand to the implementer.
+
+    `allowed` restricts the digest to scenarios the role is permitted to see. Without it the
+    assertion text of a held-out scenario -- including its expected value -- would be handed
+    straight to the implementer, which defeats the point of holding it out.
+    """
     parts = []
     for rid, r in run.get("results", {}).items():
+        if allowed is not None and rid not in allowed:
+            continue
         if r["outcome"] == "failed":
             parts.append(f"--- {rid} ({r['nodeid']}) ---\n{r['detail'][:1500]}")
         if len(parts) >= limit:
             break
     if not parts:
-        parts.append(run.get("stdout", "")[-2000:])
+        parts.append("no visible failing scenario detail available")
     return "\n\n".join(parts)
