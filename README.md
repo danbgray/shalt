@@ -212,3 +212,14 @@ ratchet/
   pytest_plugin.py  maps pytest-bdd outcomes back to scenario ids
   cli.py
 ```
+
+## Licence
+
+**Not yet licensed.** This repository is private and all rights are reserved.
+
+The intention is to release it under the **MIT License**. Until then there is deliberately no
+`LICENSE` file, because adding one would be the grant itself. What is in place instead is the
+machinery that keeps the option open: contributions require DCO sign-off, dependency licences are
+tracked, and `CONTRIBUTING.md` carries the checklist for whoever flips the switch.
+
+If you have been given access to this repository, that is access — not a licence.
