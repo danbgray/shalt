@@ -169,6 +169,15 @@ def audit(root: Path, ledger, features: list) -> list[str]:
     for e in ledger.entries.values():
         if e.status == "green" and e.verified_spec_hash != e.spec_hash:
             problems.append(f"green but unverified against current spec: {e.rid} {e.name}")
+    for e in ledger.entries.values():
+        if e.status == "green" and e.mutants_killed == 0:
+            problems.append(
+                f"vacuous: {e.rid} '{e.name}' is green but detected no mutation — "
+                f"its step definitions may not assert what the scenario says")
+        elif e.status == "green" and e.blind_spots:
+            problems.append(
+                f"weak oracle: {e.rid} '{e.name}' ran {e.blind_spots} mutated version(s) "
+                f"of code it executes without noticing")
     lock = ledger.spec_lock
     if not lock:
         problems.append("spec is not approved: no human sign-off recorded")

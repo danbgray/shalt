@@ -15,3 +15,5 @@ ratchet = "ratchet.cli:main"
 [tool.setuptools.packages.find]
 include = ["ratchet*"]
 
+[tool.pytest.ini_options]
+markers = ["slow: needs a full test-suite run per mutant"]

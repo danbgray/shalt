@@ -195,6 +195,69 @@ story's "As a billing clerk…" reads as prose while every id, hash and status r
 the progress meter is drawn as discrete **detents** rather than a bar, one per scenario, because
 a ratchet advances in notches — the ornament encodes a real count.
 
+## Mutation-testing the oracle
+
+The write guard stops an implementer tampering with the tests. Holdouts catch an implementer
+overfitting to the examples it saw. Neither says anything about the **stepwright** — nothing
+above checks that the generated step definitions actually assert what their scenario claims. A
+step definition ending in `assert result is not None` passes every time, and the ledger shows
+green.
+
+`ratchet mutate` runs the check in the opposite direction to the obvious one: rather than
+mutating the step definitions, it mutates the **implementation** and asks whether the scenarios
+notice. Break the rounding rule; if "a half-cent total rounds up" stays green, that scenario is
+not testing rounding, whatever its name says.
+
+```
+mutation score 91.7%  (22 killed, 2 survived, 0 invalid)
+
+BLIND SPOTS — 2 mutation(s) ran inside scenarios that stayed green:
+  src/invoice.py:5  number  0.0 -> 1.0
+      missed by  A half-cent total rounds up, not down
+      missed by  An invoice with several line items
+```
+
+Attribution is what makes this more useful than a suite-wide mutation score. Every mutant
+records which scenarios went red, so each scenario gets its own count — and a scenario's kills
+reveal which files it provably executes, giving coverage-like attribution with no
+language-specific coverage tool.
+
+Two signals, and **neither alone is sufficient**:
+
+- **vacuous** — the scenario detected nothing at all.
+- **blind spot** — the scenario has a healthy kill count but still ran broken code silently.
+
+The second exists because the first is too weak on its own: a vacuous assertion still notices
+mutations that *crash* the code, so a meaningless assertion can post a good kill count. What it
+cannot notice is a well-formed wrong value. Which signal fires depends on whether the sampled
+mutations crash or merely change a value, so `weak_oracles` is the union and the thing to check.
+
+A blind spot is one of two defects, and they need different fixes:
+
+- the assertion does not check the value → **the step definitions are weak**;
+- no scenario exercises the case the mutation changes → **the spec is missing a scenario**,
+  usually a boundary the narrative implies but no example pins down.
+
+This cannot tell them apart, because it does not know which inputs each scenario uses. Both are
+real defects in the spec/test pair, so both get surfaced. On the worked example — a spec written
+by hand and believed complete — it found a redundant config entry masked by its own default, a
+missing scenario for an unsupported currency code, and a missing odd-cent rounding case.
+
+Two limitations that bound what the score means:
+
+1. **Equivalent mutants.** Some mutations do not change behaviour at all. Those survive for
+   reasons unrelated to the oracle. A survivor is a question, not a proven defect.
+2. **Coverage confounds strength.** A mutant on a line no scenario reaches survives because
+   nothing runs it. Survivors are reported with file and line so a human keeps that distinction.
+
+Docstrings are never mutated — a mutated docstring always survives, which would fill the
+survivor list with findings nobody can act on. Mutants that break the suite itself are counted
+`invalid` and excluded rather than scored, because they prove nothing about the assertions.
+
+Engines: `python` mutates the AST (comparisons, arithmetic, booleans, numeric, string and
+boolean literals); `text` is deliberately crude and works on Go, JavaScript, Java, Ruby and C#.
+`auto` picks by stack.
+
 ## The ledger
 
 `.ratchet/ledger.json` — portable, versioned (`ratchet.ledger/1`), deliberately not tied to any
@@ -223,6 +286,7 @@ ratchet tree                       epic -> story -> scenario, with status
 ratchet stories                    who wants what, and what is missing a narrative
 ratchet diagrams                   Mermaid use-case, breakdown and pipeline diagrams
 ratchet dashboard                  a self-contained HTML dashboard
+ratchet mutate                     mutation-test the oracle: do the scenarios mean anything?
 ```
 
 ## Backends
@@ -266,6 +330,7 @@ Demonstrated, end to end, in `examples/invoice/demo.sh` and the 37 tests:
 - the pipeline runs: prompt → Gherkin → human approval → step definitions → implementation → green
 - an implementer that edits the tests is caught and rolled back — by five different routes
 - an implementer that overfits to visible examples is caught by holdouts
+- a stepwright that writes assertions testing nothing is caught by mutation testing
 - held-out scenarios' failure text is never shown to the implementer
 - editing an approved scenario stales exactly that scenario's green and no other
 - `ratchet verify` detects any edit, addition or deletion made since sign-off
@@ -283,10 +348,7 @@ Not yet addressed, in rough order of how much they matter:
 1. **Gherkin's expressiveness ceiling.** Latency, cost, security posture, UI behaviour — Gherkin
    is bad at all of them. There is currently no escape hatch, which means a spec written only in
    Gherkin is a lie by omission.
-2. **The stepwright is still a single point of failure.** It is isolated from the
-   implementation, but nothing yet checks that its step definitions actually assert what the
-   scenario says. A mutation-testing pass over the step definitions is the obvious next move.
-3. **Holdouts are a sample, not a proof.** They catch crude overfitting. A sufficiently capable
+2. **Holdouts are a sample, not a proof.** They catch crude overfitting. A sufficiently capable
    implementer generalises just far enough to pass them.
 4. **No cost or turn accounting.** A build loop that runs 40 turns should say what it spent.
 5. **Non-Python runners.** The zone model is language-agnostic; the runner is not.
@@ -307,6 +369,7 @@ ratchet/
   config.py         ratchet.toml -- what makes the runner language-agnostic
   reports.py        Cucumber JSON and Cucumber Messages parsers, bound by @rid tag
   viz.py            the tree, the Mermaid diagrams, the HTML dashboard
+  mutate.py         mutation testing: is the oracle actually asserting anything?
 ```
 
 ## Licence

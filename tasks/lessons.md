@@ -43,3 +43,20 @@ retries, error surfacing and token accounting — everything except the model's 
    been a lie; "the plumbing is proven, the judgement is not" is the honest claim.
 9. A path sandbox must refuse, never silently reinterpret. `/etc/passwd` was being rewritten to
    `<stage>/etc/passwd` — no escape, but it hid intent. Refuse and say why.
+
+## 2026-09-12 — "detected nothing" was the wrong test
+
+Built a vacuous-oracle detector defined as "a green scenario that killed zero mutants", then
+watched it clear a step definition whose entire assertion was `assert result is not None`. The
+reason: a meaningless assertion still catches mutations that make the code *crash*, so it posts
+a healthy kill count while being blind to every wrong value.
+
+10. When measuring whether a test is meaningful, ask what the weak version still catches, not
+    only what the strong version catches. The metric has to separate those two, or it certifies
+    exactly the thing it was built to find.
+11. Two partial signals that fire under different conditions need a named union, and the union
+    is what callers check. I asserted the wrong one in a test and the test was right to fail.
+12. Exclude findings nobody can act on. Mutated docstrings always survive; leaving them in put
+    5 unactionable entries in a 6-entry survivor list, which teaches the reader to ignore it.
+13. Read the line numbers before disbelieving the tool. I was sure a surviving mutant was a bug
+    in my mutation engine; it was a real gap in a spec I had written and believed complete.

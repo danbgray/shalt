@@ -77,6 +77,22 @@ GitHub projects including one using the same ratcheting metaphor for CI, plus un
 Shortlist researched and pending a decision; `jumar` (a rope ascender that grips one way only)
 is the leading candidate and is free everywhere checked.
 
+**Mutation testing the oracle (follow-up).** Closed the last unguarded link: nothing checked
+that the stepwright's assertions test anything. `ratchet mutate` mutates the *implementation*
+and asks which scenarios notice, attributing each kill to specific scenarios so every scenario
+gets its own oracle-strength count. A scenario's kills also reveal which files it provably
+executes, which gives coverage-like attribution with no language-specific coverage tool.
+
+The design took one real correction: "green scenario that killed zero mutants" cleared a step
+definition asserting only `is not None`, because a vacuous assertion still catches crashes. The
+fix is a second signal — a survivor in a file the scenario provably runs — with the two exposed
+as a `weak_oracles` union, since which one fires depends on whether the sampled mutations crash
+or merely change a value. 108 tests.
+
+On the worked example it found three genuine gaps in a spec I wrote by hand and believed
+complete: a config entry masked by its own default, no scenario for an unsupported currency
+code, and no odd-cent rounding case.
+
 **Known gaps, in priority order:** never run against a live model (fixtures only); no escape
 hatch for non-functional requirements; the stepwright is unverified (mutation testing over step
 definitions is the obvious next move); no cost or turn accounting; Python-only runner.

@@ -44,6 +44,8 @@ class Entry:
     last_green_at: str | None = None
     last_run_at: str | None = None
     failure: str | None = None
+    mutants_killed: int | None = None   # None = never mutation-tested
+    blind_spots: int | None = None      # survivors in files this scenario provably runs
     history: list[dict[str, Any]] = field(default_factory=list)
 
     def record(self, event: str, **kw: Any) -> None:
@@ -61,6 +63,7 @@ class Ledger:
     entries: dict[str, Entry] = field(default_factory=dict)
     spec_lock: dict[str, Any] = field(default_factory=dict)
     regressions: list[dict[str, Any]] = field(default_factory=list)
+    mutation: dict[str, Any] = field(default_factory=dict)
 
     # ---------- persistence ----------
     @classmethod
@@ -76,6 +79,7 @@ class Ledger:
                      for k, e in raw.get("scenarios", {}).items()},
             spec_lock=raw.get("spec_lock", {}),
             regressions=raw.get("regressions", []),
+            mutation=raw.get("mutation", {}),
         )
 
     def save(self, path: Path) -> None:
@@ -86,6 +90,7 @@ class Ledger:
             "summary": self.summary(),
             "spec_lock": self.spec_lock,
             "regressions": self.regressions,
+            "mutation": self.mutation,
             "scenarios": {k: asdict(v) for k, v in sorted(self.entries.items())},
         }
         path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -204,6 +209,20 @@ class Ledger:
         unknown = [rid for rid in results if rid not in self.entries]
         return {"regressions": new_regressions, "unknown_rids": unknown,
                 "summary": self.summary()}
+
+    def apply_mutation(self, report) -> None:
+        """Record oracle strength per scenario: how many mutations each one detected."""
+        self.mutation = report.to_dict()
+        blind = report.blind_spots
+        for rid, e in self.entries.items():
+            if rid in report.baseline_green:
+                e.mutants_killed = report.kills.get(rid, 0)
+                e.blind_spots = len(blind.get(rid, []))
+                if e.mutants_killed == 0:
+                    e.record("VACUOUS", detail="green but detected no mutation")
+                elif e.blind_spots:
+                    e.record("BLIND_SPOT", count=e.blind_spots,
+                             detail="ran mutated code without noticing")
 
     # ---------- views ----------
     def summary(self) -> dict[str, int]:

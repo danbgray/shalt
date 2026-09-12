@@ -13,6 +13,7 @@ from .narrative import parse_story
 from .viz import (STATUS_LABEL, build_tree, actors, write_dashboard, write_mermaid,
                   mermaid_hierarchy, mermaid_pipeline, mermaid_usecase)
 from .integrity import IntegrityViolation, audit
+from .mutate import ENGINES, run_campaign
 from .ledger import GREEN, PENDING, RED, STALE, ORPHAN, Ledger
 from .roles import run_role
 from .runner import failure_digest, harness_report, run_suite
@@ -382,6 +383,98 @@ def cmd_dashboard(args) -> int:
     return 0
 
 
+def cmd_mutate(args) -> int:
+    """Mutation-test the oracle: break the implementation, see whether the scenarios notice.
+
+    The guards stop an implementer tampering with the tests, and holdouts catch it overfitting.
+    Neither checks the stepwright. This does: a scenario that stays green while the behaviour it
+    claims to verify is broken is not testing that behaviour.
+    """
+    root = _root(args)
+    led, features = _sync(root)
+    cfg = Config.load(root)
+    print(f"mutating {cfg.src}/ — engine {args.engine}, budget {args.budget}, "
+          f"seed {args.seed}")
+    print(_c("  each mutant needs a full suite run; this takes a while.", "dim"))
+
+    def progress(i, total, m):
+        mark = {"killed": _c("killed", "green"), "survived": _c("SURVIVED", "red"),
+                "invalid": _c("invalid", "dim")}[m.status]
+        print(f"  [{i:>3}/{total}] {mark:<18} {m.describe()}")
+
+    report = run_campaign(root, cfg, engine=args.engine, budget=args.budget,
+                          seed=args.seed, progress=progress if args.verbose else None)
+    if report.error:
+        print(_c(f"\ncannot run: {report.error}", "red"), file=sys.stderr)
+        return 1
+
+    led.apply_mutation(report)
+    led.save(root / LEDGER_PATH)
+
+    print(f"\nmutation score {_c(str(report.score) + '%', 'bold')}  "
+          f"({len(report.killed)} killed, {len(report.survived)} survived, "
+          f"{len(report.invalid)} invalid)")
+    if report.invalid:
+        print(_c(f"  {len(report.invalid)} mutant(s) excluded: they broke the suite itself, "
+                 f"so they prove nothing about the assertions.", "dim"))
+
+    if report.survived:
+        print(_c(f"\n{len(report.survived)} mutation(s) survived — no scenario noticed:",
+                 "yellow"))
+        for m in report.survived[:15]:
+            print(f"  {m.describe()}")
+        if len(report.survived) > 15:
+            print(_c(f"  ... and {len(report.survived) - 15} more", "dim"))
+        print(_c("  Each is a question, not a proven defect: a survivor can mean a weak "
+                 "assertion,\n  an unexercised line, or a mutation that changed nothing.",
+                 "dim"))
+
+    blind = report.blind_spots
+    if blind:
+        # grouped by mutant, not by scenario: one broken line missed by five scenarios is one
+        # finding about those five, not five findings
+        by_mutant: dict[str, list[str]] = {}
+        for rid, ms in blind.items():
+            for m in ms:
+                by_mutant.setdefault(m.describe(), []).append(rid)
+        print(_c(f"\nBLIND SPOTS — {len(by_mutant)} mutation(s) ran inside scenarios that "
+                 f"stayed green:", "red"))
+        for desc, rids in sorted(by_mutant.items(), key=lambda kv: -len(kv[1])):
+            print(f"  {desc}")
+            for rid in sorted(rids)[:6]:
+                e = led.entries.get(rid)
+                print(_c(f"      missed by  {e.name if e else rid}", "dim"))
+            if len(rids) > 6:
+                print(_c(f"      ... and {len(rids) - 6} more", "dim"))
+        print(_c("\n  Each of these scenarios provably executes the line that was broken and "
+                 "stayed green.\n  That is one of two defects, and they need different "
+                 "fixes:\n"
+                 "    - the assertion does not check the value  -> the step definitions are "
+                 "weak\n"
+                 "    - no scenario exercises the case the mutation changes  -> the spec is "
+                 "missing a scenario", "dim"))
+
+    if report.vacuous:
+        print(_c(f"\nVACUOUS — {len(report.vacuous)} green scenario(s) detected no mutation "
+                 f"at all:", "red"))
+        for rid in report.vacuous:
+            e = led.entries.get(rid)
+            print(f"  {rid}  {e.name if e else '?'}")
+        print(_c("  These pass regardless of what the implementation does. Read their step "
+                 "definitions.", "dim"))
+    elif not blind:
+        print(_c("\nevery green scenario detected a mutation, and none stayed green while "
+                 "code it runs was broken.", "green"))
+
+    weakest = sorted(((report.kills.get(r, 0), r) for r in report.baseline_green))[:5]
+    if weakest and args.verbose:
+        print("\nweakest oracles (mutations detected):")
+        for n, rid in weakest:
+            e = led.entries.get(rid)
+            print(f"  {n:>3}  {e.name if e else rid}")
+    return 1 if report.weak_oracles else 0
+
+
 def _print_status(led: Ledger, root: Path) -> None:
     s = led.summary()
     print()
@@ -444,6 +537,13 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--diagram", choices=["use-cases", "breakdown", "pipeline"], default=None)
     d.set_defaults(fn=cmd_diagrams)
     sub.add_parser("dashboard").set_defaults(fn=cmd_dashboard)
+    m = sub.add_parser("mutate")
+    m.add_argument("--engine", default="auto", choices=["auto"] + list(ENGINES),
+                   help="auto picks the Python AST engine for a Python stack, else text")
+    m.add_argument("--budget", type=int, default=30, help="how many mutants to try")
+    m.add_argument("--seed", type=int, default=0, help="sampling seed, for reproducibility")
+    m.add_argument("--verbose", action="store_true", help="show each mutant as it runs")
+    m.set_defaults(fn=cmd_mutate)
 
     args = p.parse_args(argv)
     try:

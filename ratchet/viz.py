@@ -292,6 +292,10 @@ h2{font-size:17px; font-weight:600; margin:0 0 4px; letter-spacing:-.005em;}
 .row .flag{font-size:10.5px; letter-spacing:.06em; text-transform:uppercase;
   color:var(--orphan); border:1px solid var(--orphan); border-radius:3px; padding:1px 5px;
   flex:none;}
+.row .weak{font-size:10.5px; letter-spacing:.06em; text-transform:uppercase;
+  color:var(--stale); border:1px solid var(--stale); border-radius:3px; padding:1px 5px;
+  flex:none;}
+.row .kills{font-size:11px; color:var(--ink-3); flex:none;}
 .row .why{flex-basis:100%; font-size:12px; color:var(--failing); margin-top:2px;
   overflow-x:auto; white-space:pre-wrap;}
 
@@ -428,6 +432,17 @@ def dashboard_html(ledger, project: str = "", stack: str = "") -> str:
                 e = by_rid[sc.key]
                 flag = ('<span class="flag">held out</span>'
                         if "@holdout" in (e.tags or []) else "")
+                # oracle strength: green means nothing if the assertions test nothing
+                if e.mutants_killed == 0:
+                    flag += '<span class="weak" title="detected no mutation at all">' \
+                            'vacuous</span>'
+                elif e.blind_spots:
+                    flag += (f'<span class="weak" title="ran {e.blind_spots} mutated '
+                             f'version(s) of code it executes without noticing">weak '
+                             f'oracle</span>')
+                kills = (f'<span class="kills mono" title="mutations detected">'
+                         f'{e.mutants_killed}&times;</span>'
+                         if e.mutants_killed else "")
                 terse = terse_failure(e.failure) if e.failure else ""
                 why = (f'<div class="why mono">{html.escape(terse[:400])}</div>'
                        if e.status == "red" and terse else "")
@@ -436,7 +451,7 @@ def dashboard_html(ledger, project: str = "", stack: str = "") -> str:
                     f'<div class="row">'
                     f'<span class="stripe" style="background:var(--{var})"></span>'
                     f'<span class="chip {sc.status}">{STATUS_LABEL[sc.status]}</span>'
-                    f'<span class="what">{html.escape(sc.label)}</span>{flag}'
+                    f'<span class="what">{html.escape(sc.label)}</span>{flag}{kills}'
                     f'<span class="rid mono">{html.escape(sc.key)}</span>{why}</div>')
             n_green = sum(1 for c in story.children if c.status == "green")
             stories.append(
@@ -452,6 +467,22 @@ def dashboard_html(ledger, project: str = "", stack: str = "") -> str:
             f'<span class="name">{html.escape(epic.label)}</span>'
             f'<span class="tally mono">{green}/{total}</span></div>'
             f'{"".join(stories)}</div>')
+
+    mut = ledger.mutation or {}
+    weak = mut.get("weak_oracles") or {}
+    mut_html = ""
+    if mut:
+        tone = "--failing" if weak else "--verified"
+        mut_html = (
+            f'<div class="lock" style="border-left-color:var({tone})">'
+            f'<div><span class="k">mutation score</span><span class="mono">'
+            f'{mut.get("score", 0)}%</span></div>'
+            f'<div><span class="k">detected</span><span class="mono">'
+            f'{mut.get("killed", 0)}</span></div>'
+            f'<div><span class="k">survived</span><span class="mono">'
+            f'{mut.get("survived", 0)}</span></div>'
+            f'<div><span class="k">weak oracles</span><span class="mono">'
+            f'{len(weak)}</span></div></div>')
 
     lock = ledger.spec_lock or {}
     lock_html = (
@@ -485,6 +516,7 @@ def dashboard_html(ledger, project: str = "", stack: str = "") -> str:
     </div>
   </div>
   {lock_html}
+  {mut_html}
 
   <section>
     <h2>Who wants what</h2>
@@ -497,7 +529,10 @@ def dashboard_html(ledger, project: str = "", stack: str = "") -> str:
     <h2>Breakdown</h2>
     <p class="note">Epic, then story, then one scenario per row. A parent is never greener
       than its children, and a scenario with no test bound to it reads
-      <span class="mono">pending</span> — never verified.</p>
+      <span class="mono">pending</span> — never verified. The
+      <span class="mono">n&times;</span> count is how many mutations of the implementation
+      that scenario detected: green with a low count is a scenario that may not be testing
+      what its name claims.</p>
     {"".join(epics_html) or '<p class="note">No scenarios yet.</p>'}
   </section>
 

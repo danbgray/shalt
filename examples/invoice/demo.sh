@@ -43,3 +43,20 @@ echo
 echo "################ 6. diagrams and dashboard ################"
 $R --root "$WORK/honest" diagrams
 $R --root "$WORK/honest" dashboard
+
+echo
+echo "################ 7. does the oracle mean anything? ################"
+echo "# a stepwright whose assertions do not check the value. every scenario goes green."
+bootstrap_weak () {
+  rm -rf "$1"
+  $R --root "$1" init >/dev/null
+  $R --root "$1" --fixtures "$FIX/honest" author "Invoicing" >/dev/null
+  $R --root "$1" --fixtures "$FIX/honest" approve --yes --by "demo@example.com" >/dev/null
+  $R --root "$1" --fixtures "$FIX/weak-oracle" steps >/dev/null
+  $R --root "$1" --fixtures "$FIX/honest" build --max-turns 5 >/dev/null
+}
+bootstrap_weak "$WORK/weak"
+$R --root "$WORK/weak" status | tail -2
+echo
+echo "# 100% green. now break the implementation and see which scenarios notice:"
+$R --root "$WORK/weak" mutate --budget 12 || true
