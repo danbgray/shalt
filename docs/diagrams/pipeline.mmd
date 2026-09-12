@@ -1,0 +1,25 @@
+graph LR
+  req["Plain-English request"] --> author["Author agent"]
+  author --> story["User story<br/>As a / I want / So that"]
+  story --> gherkin["Gherkin scenarios"]
+  gherkin --> gate{"Human<br/>approval"}
+  gate -->|"stamps @rid, records<br/>content hashes"| locked["Approved spec"]
+  locked --> sw["Stepwright agent<br/>sees spec only"]
+  sw --> steps["Step definitions"]
+  sw --> contract["Interface contract"]
+  contract --> impl["Implementer agent<br/>never sees the steps"]
+  locked --> impl
+  impl --> src["Implementation"]
+  steps --> run["Test run"]
+  src --> run
+  run --> ledger["Scenario ledger"]
+  ledger -->|"still red"| impl
+  ledger --> hold["Held-out scenarios<br/>verify, never shown"]
+
+  style gate fill:#a9761b,stroke:#7d570f,color:#ffffff
+  style locked fill:#3d4f7c,stroke:#2a3757,color:#ffffff
+  style ledger fill:#1f7a4c,stroke:#155a38,color:#ffffff
+  style hold fill:#6e5a86,stroke:#514166,color:#ffffff
+  style sw fill:#eef1f7,stroke:#3d4f7c,color:#1a1f26
+  style impl fill:#eef1f7,stroke:#3d4f7c,color:#1a1f26
+  style author fill:#eef1f7,stroke:#3d4f7c,color:#1a1f26

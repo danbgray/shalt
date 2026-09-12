@@ -23,6 +23,13 @@ discharged.
 
 Status: working prototype. The full loop runs offline, with no API key, via recorded fixtures.
 
+**Technical documentation:** [docs/](docs/) — [architecture](docs/architecture.md) ·
+[isolation & threat model](docs/isolation.md) · [ledger schema](docs/ledger.md) ·
+[identity & hashing](docs/identity.md) · [runners](docs/runners.md) ·
+[hierarchy](docs/hierarchy.md) · [mutation testing](docs/mutation.md) ·
+[backends](docs/backends.md) · [CLI](docs/cli.md) · [testing](docs/testing.md) ·
+[limitations](docs/limitations.md)
+
 ```bash
 pip install -e .
 examples/invoice/demo.sh

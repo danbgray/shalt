@@ -1,0 +1,40 @@
+graph TD
+  epic-billing["BILLING"]
+  epic-billing --> story-currency-feature["Currency presentation"]
+  story-currency-feature --> S_f7bdc165("✓  Euros use the euro sign")
+  story-currency-feature --> S_fbcb2e51("✓  US dollars lead with the symbol and group thousands")
+  story-currency-feature --> S_0a540700("✓  Yen has no minor unit")
+  story-currency-feature --> S_0d6ef856("✓  Yen rounds to whole units rather than truncating")
+  epic-billing --> story-invoice-feature["Invoice totals"]
+  story-invoice-feature --> S_814600e8("✓  A half-cent total rounds up, not down")
+  story-invoice-feature --> S_e73dd792("✓  An invoice the implementer was never shown")
+  story-invoice-feature --> S_3c553b9b("✓  An invoice with a single line item")
+  story-invoice-feature --> S_29a29c03("✓  An invoice with no line items")
+  story-invoice-feature --> S_a9a10938("✓  An invoice with several line items")
+  epic-collections["COLLECTIONS"]
+  epic-collections --> story-reminders-feature["Overdue reminders"]
+  story-reminders-feature --> S_88a29dc5("✓  A month late gets a firm notice")
+  story-reminders-feature --> S_dfc0503e("✓  A week late gets a gentle nudge")
+  story-reminders-feature --> S_d3c7d2ac("✓  An invoice that is not yet overdue gets no reminder")
+  story-reminders-feature --> S_38497c3b("✓  The day before escalation still gets the gentler notice")
+  story-reminders-feature --> S_753c400b("✗  Two months late gets a final demand")
+
+  style epic-billing fill:#3d4f7c,stroke:#2a3757,color:#ffffff
+  style story-currency-feature fill:#eef1f7,stroke:#3d4f7c,color:#1a1f26
+  style S_f7bdc165 fill:#1f7a4c,stroke:#1f7a4c,color:#ffffff
+  style S_fbcb2e51 fill:#1f7a4c,stroke:#1f7a4c,color:#ffffff
+  style S_0a540700 fill:#1f7a4c,stroke:#1f7a4c,color:#ffffff
+  style S_0d6ef856 fill:#1f7a4c,stroke:#1f7a4c,color:#ffffff
+  style story-invoice-feature fill:#eef1f7,stroke:#3d4f7c,color:#1a1f26
+  style S_814600e8 fill:#1f7a4c,stroke:#1f7a4c,color:#ffffff
+  style S_e73dd792 fill:#1f7a4c,stroke:#1f7a4c,color:#ffffff
+  style S_3c553b9b fill:#1f7a4c,stroke:#1f7a4c,color:#ffffff
+  style S_29a29c03 fill:#1f7a4c,stroke:#1f7a4c,color:#ffffff
+  style S_a9a10938 fill:#1f7a4c,stroke:#1f7a4c,color:#ffffff
+  style epic-collections fill:#3d4f7c,stroke:#2a3757,color:#ffffff
+  style story-reminders-feature fill:#eef1f7,stroke:#3d4f7c,color:#1a1f26
+  style S_88a29dc5 fill:#1f7a4c,stroke:#1f7a4c,color:#ffffff
+  style S_dfc0503e fill:#1f7a4c,stroke:#1f7a4c,color:#ffffff
+  style S_d3c7d2ac fill:#1f7a4c,stroke:#1f7a4c,color:#ffffff
+  style S_38497c3b fill:#1f7a4c,stroke:#1f7a4c,color:#ffffff
+  style S_753c400b fill:#b3382e,stroke:#b3382e,color:#ffffff
