@@ -196,7 +196,7 @@ def test_full_pipeline_runs_over_the_http_adapter(tmp_path):
 
     assert "100.0%" in out, out
     led = Ledger.load(root / ".ratchet" / "ledger.json")
-    assert led.summary()["green"] == 5
+    assert led.summary()["green"] == led.summary()["total"] > 5
     assert led.spec_lock["approved_by"] == "dan@rivlet.io"
     assert srv.calls, "the model was actually called over HTTP"
 

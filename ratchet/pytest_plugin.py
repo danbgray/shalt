@@ -9,8 +9,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-_STATE: dict = {"map": {}, "node_to_key": {}, "outcomes": {}, "report": None,
-                "spec_dir": None}
+from ratchet.spec import RID_RE
+
+_STATE: dict = {"map": {}, "node_to_key": {}, "node_to_rid": {}, "outcomes": {},
+                "report": None, "spec_dir": None}
 
 
 def pytest_addoption(parser):
@@ -25,6 +27,7 @@ def pytest_configure(config):
     _STATE["report"] = Path(report) if report else None
     _STATE["map"] = {}
     _STATE["node_to_key"] = {}
+    _STATE["node_to_rid"] = {}
     _STATE["outcomes"] = {}
     if spec:
         from ratchet.spec import load_specs
@@ -38,7 +41,21 @@ def pytest_configure(config):
                     _STATE["map"][(f.file.replace("\\", "/"), s.name)] = s.rid
 
 
+def _rid_from_scenario(scenario):
+    """pytest-bdd exposes Gherkin tags as a set of names without the leading '@'."""
+    for tag in getattr(scenario, "tags", None) or []:
+        name = str(tag).strip().lstrip("@")
+        if name.startswith("rid:") and RID_RE.fullmatch("@" + name):
+            return name[4:]
+    return None
+
+
 def pytest_bdd_before_scenario(request, feature, scenario):
+    rid = _rid_from_scenario(scenario)
+    if rid:
+        # binding by tag is exact and needs no filename matching at all
+        _STATE["node_to_rid"][request.node.nodeid] = rid
+        return
     spec_dir = _STATE.get("spec_dir")
     fname = Path(feature.filename).resolve()
     try:
@@ -51,10 +68,12 @@ def pytest_bdd_before_scenario(request, feature, scenario):
 def pytest_runtest_logreport(report):
     if report.when != "call" and not (report.when == "setup" and report.failed):
         return
-    key = _STATE["node_to_key"].get(report.nodeid)
-    if key is None:
-        return
-    rid = _STATE["map"].get(key)
+    rid = _STATE["node_to_rid"].get(report.nodeid)
+    if rid is None:
+        key = _STATE["node_to_key"].get(report.nodeid)
+        if key is None:
+            return
+        rid = _STATE["map"].get(key)
     if rid is None:
         return
     detail = ""
@@ -74,7 +93,7 @@ def pytest_sessionfinish(session, exitstatus):
         return
     bound = set(_STATE["outcomes"])
     unbound_nodes = [n for n, k in _STATE["node_to_key"].items()
-                     if _STATE["map"].get(k) is None]
+                     if _STATE["map"].get(k) is None and n not in _STATE["node_to_rid"]]
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({
         "results": _STATE["outcomes"],

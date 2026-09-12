@@ -8,6 +8,10 @@ import time
 from pathlib import Path
 
 from .backends import BACKENDS, make_backend
+from .config import CONFIG_NAME, PRESETS, Config, write_config
+from .narrative import parse_story
+from .viz import (STATUS_LABEL, build_tree, actors, write_dashboard, write_mermaid,
+                  mermaid_hierarchy, mermaid_pipeline, mermaid_usecase)
 from .integrity import IntegrityViolation, audit
 from .ledger import GREEN, PENDING, RED, STALE, ORPHAN, Ledger
 from .roles import run_role
@@ -55,20 +59,28 @@ def _sync(root: Path) -> tuple[Ledger, list]:
 # ----------------------------------------------------------------- commands
 def cmd_init(args) -> int:
     root = _root(args)
-    for d in ("spec", "steps", "contract", "src", ".ratchet"):
+    root.mkdir(parents=True, exist_ok=True)
+    preset = write_config(root, args.stack, name=args.name or root.name)
+    cfg = Config.load(root)
+    for d in ("spec", "contract", ".ratchet", cfg.steps, cfg.src):
         (root / d).mkdir(parents=True, exist_ok=True)
-    (root / "steps" / "conftest.py").write_text(
-        "import sys, pathlib\n"
-        "sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'src'))\n",
+    if args.stack == "python":
+        (root / cfg.steps / "conftest.py").write_text(
+            "import sys, pathlib\n"
+            f"sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] "
+            f"/ '{cfg.src}'))\n", encoding="utf-8")
+    (root / ".ratchet" / ".gitignore").write_text(
+        "stage/\nbackup/\nlast_run.json\nmessages.ndjson\ncucumber.json\n",
         encoding="utf-8")
-    (root / ".ratchet" / ".gitignore").write_text("stage/\nbackup/\nlast_run.json\n",
-                                                  encoding="utf-8")
     Ledger().save(root / LEDGER_PATH)
-    print(f"initialised ratchet workspace at {root}")
-    print("  spec/      Gherkin, written by the author role, approved by you")
-    print("  steps/     step definitions, written by the stepwright role only")
-    print("  contract/  the API surface the stepwright declares it will call")
-    print("  src/       implementation, written by the implementer role only")
+    print(f"initialised ratchet workspace at {root}  ({preset.label})")
+    print(f"  spec/        Gherkin + user stories, written by the author, approved by you")
+    print(f"  {cfg.steps + '/':<12} step definitions, written by the stepwright only")
+    print(f"  contract/    the API surface the stepwright declares it will call")
+    print(f"  {cfg.src + '/':<12} implementation, written by the implementer only")
+    print(f"  {CONFIG_NAME}  runner command and report format — edit to suit your toolchain")
+    if preset.note:
+        print(f"\n  {preset.note}")
     return 0
 
 
@@ -160,7 +172,7 @@ def cmd_steps(args) -> int:
 def cmd_run(args) -> int:
     root = _root(args)
     led, features = _sync(root)
-    run = run_suite(root)
+    run = run_suite(root, Config.load(root))
     if run.get("harness_error"):
         print(_c("the test harness failed to run -- this is not 'pending' work:", "red"),
               file=sys.stderr)
@@ -185,6 +197,7 @@ def cmd_build(args) -> int:
     if not led.spec_lock:
         print("spec is not approved yet -- run `ratchet approve` first", file=sys.stderr)
         return 1
+    cfg = Config.load(root)
     backend = _backend(args)
     held = holdout_rids(features)
     live = [rid for rid, e in led.entries.items() if e.status != ORPHAN]
@@ -193,7 +206,7 @@ def cmd_build(args) -> int:
         print(_c(f"{len(held)} scenario(s) held out from the implementer", "dim"))
 
     for turn in range(1, args.max_turns + 1):
-        run = run_suite(root)
+        run = run_suite(root, cfg)
         if run.get("harness_error"):
             print(_c(f"\nturn {turn}: the test harness failed to run", "red"))
             print(harness_report(run))
@@ -228,7 +241,7 @@ def cmd_build(args) -> int:
         print(_c(f"\nstopped after {args.max_turns} turns", "yellow"))
 
     # final verification, holdouts included
-    run = run_suite(root)
+    run = run_suite(root, cfg)
     if run.get("harness_error"):
         print(_c("final verification could not run", "red"))
         print(harness_report(run))
@@ -269,6 +282,106 @@ def cmd_verify(args) -> int:
     return 1
 
 
+GLYPH = {"green": "+", "red": "x", "stale": "~", "pending": ".", "orphan": "?"}
+COLOUR = {"green": "green", "red": "red", "stale": "yellow",
+          "pending": "dim", "orphan": "yellow"}
+
+
+def cmd_tree(args) -> int:
+    """The breakdown as a tree: epic -> story -> scenario."""
+    root = _root(args)
+    led, features = _sync(root)
+    tree = build_tree(list(led.entries.values()))
+    if not tree:
+        print("no scenarios yet — run `ratchet author \"<what you want>\"`")
+        return 0
+    story_of = {f.file: f for f in features}
+    for epic in tree:
+        n = sum(len(st.children) for st in epic.children)
+        g = sum(1 for st in epic.children for c in st.children if c.status == "green")
+        print(f"\n{_c('EPIC', 'dim')} {_c(epic.label.upper(), 'bold')}  "
+              f"{_c(f'{g}/{n} verified', COLOUR[epic.status])}")
+        for si, story in enumerate(epic.children):
+            last_story = si == len(epic.children) - 1
+            sbranch = "└──" if last_story else "├──"
+            spipe = "   " if last_story else "│  "
+            print(f" {sbranch} {_c('STORY', 'dim')} {story.label}")
+            first = led.entries[story.children[0].key]
+            st = parse_story("")
+            narrative = ""
+            if first.actor and first.capability:
+                narrative = f"As a {first.actor}, I want {first.capability}"
+                if first.benefit:
+                    narrative += f", so that {first.benefit}"
+            print(f" {spipe}      {_c(narrative or '(no user story on this feature)', 'dim')}")
+            for ci, sc in enumerate(story.children):
+                last = ci == len(story.children) - 1
+                branch = "└──" if last else "├──"
+                tag = " [holdout]" if "@holdout" in (led.entries[sc.key].tags or []) else ""
+                print(f" {spipe} {branch} {_c(GLYPH[sc.status], COLOUR[sc.status])} "
+                      f"{sc.status:<8} {sc.label}{tag} {_c(sc.key, 'dim')}")
+    _print_status(led, root)
+    return 0
+
+
+def cmd_stories(args) -> int:
+    """Who wants what, from the user-story narratives."""
+    root = _root(args)
+    led, features = _sync(root)
+    acts = actors(list(led.entries.values()))
+    if not acts:
+        print("no user stories found. Add a narrative block under Feature::\n")
+        print("  Feature: Invoice totals\n")
+        print("    As a billing clerk")
+        print("    I want invoice totals computed exactly")
+        print("    So that customers are never billed the wrong amount")
+        return 1
+    for actor, items in acts.items():
+        print(f"\n{_c(actor, 'bold')}")
+        for it in items:
+            print(f"  wants  {it['capability']}")
+            if it["benefit"]:
+                print(f"  {_c('so that ' + it['benefit'], 'dim')}")
+    missing = [f.file for f in features if not f.story.complete]
+    if missing:
+        print(_c(f"\n{len(missing)} feature(s) without a complete user story:", "yellow"))
+        for m in missing:
+            print(f"  {m}")
+    return 0
+
+
+def cmd_diagrams(args) -> int:
+    root = _root(args)
+    led, _ = _sync(root)
+    entries = list(led.entries.values())
+    if args.stdout:
+        which = {"use-cases": mermaid_usecase(entries),
+                 "breakdown": mermaid_hierarchy(entries),
+                 "pipeline": mermaid_pipeline()}
+        print(which[args.diagram] if args.diagram else which["breakdown"], end="")
+        return 0
+    written = write_mermaid(root, entries)
+    print(f"wrote {len(written)} file(s):")
+    for w in written:
+        print(f"  {w.relative_to(root)}")
+    print(_c("\n  .mmd renders in GitHub, pull requests and most editors; the .md wrappers "
+             "render inline.", "dim"))
+    return 0
+
+
+def cmd_dashboard(args) -> int:
+    root = _root(args)
+    led, _ = _sync(root)
+    cfg = Config.load(root)
+    out = write_dashboard(root, led, project=cfg.name or root.name,
+                          stack=PRESETS.get(cfg.stack).label if cfg.stack in PRESETS else "")
+    s = led.summary()
+    print(f"wrote {out.relative_to(root)}  "
+          f"({s['green']} verified / {s['total']} scenarios, {s['completion_pct']}%)")
+    print(_c("  one self-contained file: no network, no build step.", "dim"))
+    return 0
+
+
 def _print_status(led: Ledger, root: Path) -> None:
     s = led.summary()
     print()
@@ -307,7 +420,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--base-url", default=None, help="override the API base url")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    sub.add_parser("init").set_defaults(fn=cmd_init)
+    i = sub.add_parser("init")
+    i.add_argument("--stack", default="python", choices=list(PRESETS),
+                   help="toolchain preset written into ratchet.toml")
+    i.add_argument("--name", default=None)
+    i.set_defaults(fn=cmd_init)
     a = sub.add_parser("author"); a.add_argument("request"); a.set_defaults(fn=cmd_author)
     ap = sub.add_parser("approve")
     ap.add_argument("--yes", action="store_true"); ap.add_argument("--by", default="unknown")
@@ -320,6 +437,13 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("run").set_defaults(fn=cmd_run)
     sub.add_parser("status").set_defaults(fn=cmd_status)
     sub.add_parser("verify").set_defaults(fn=cmd_verify)
+    sub.add_parser("tree").set_defaults(fn=cmd_tree)
+    sub.add_parser("stories").set_defaults(fn=cmd_stories)
+    d = sub.add_parser("diagrams")
+    d.add_argument("--stdout", action="store_true", help="print one diagram instead of writing")
+    d.add_argument("--diagram", choices=["use-cases", "breakdown", "pipeline"], default=None)
+    d.set_defaults(fn=cmd_diagrams)
+    sub.add_parser("dashboard").set_defaults(fn=cmd_dashboard)
 
     args = p.parse_args(argv)
     try:

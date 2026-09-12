@@ -19,6 +19,29 @@ pass. A green suite then proves internal consistency, not correctness — self-g
 Everything below is an attempt to take that capability away structurally rather than asking for
 it politely in a prompt.
 
+## Language agnostic
+
+The zone model, scenario identity, the ledger and the guards are all language-neutral. Only the
+runner is not, so it lives in `ratchet.toml`:
+
+```toml
+[runner]
+command = "npx cucumber-js {spec} --require {steps} --format message:{report}"
+format  = "cucumber-messages"     # ratchet | cucumber-json | cucumber-messages
+report  = ".ratchet/messages.ndjson"
+```
+
+The reason this works cleanly: **`@rid:` is a Gherkin tag, and a tag survives into every
+Cucumber-family report.** So binding a result back to a scenario needs no filename matching, no
+per-language shim, and no guessing — the identity is carried in the report itself.
+
+`ratchet init --stack <python|javascript|go|java|ruby|dotnet>` writes a starting config for that
+toolchain. Anything that emits Cucumber JSON or Cucumber Messages works without new code.
+
+One rule the parsers enforce: a scenario is green only if **every** step passed. Skipped,
+pending, undefined and ambiguous all count as not-passed — a step nobody implemented is not
+evidence of success, and a suite full of undefined steps must never read as green.
+
 ## Four roles, four zones
 
 | zone        | written by     | read by                       |
@@ -107,6 +130,71 @@ OVERFIT: every visible scenario is green but held-out scenarios fail.
   the implementation satisfies the examples it saw, not the behaviour.
 ```
 
+## User stories, and the diagram hiding in them
+
+A feature's description block holds a user story:
+
+```gherkin
+@epic:billing
+Feature: Invoice totals
+
+  As a billing clerk
+  I want invoice totals computed exactly
+  So that customers are never billed the wrong amount
+```
+
+That sentence *is* a use case diagram. "As a &lt;actor&gt;" is the actor, "I want
+&lt;capability&gt;" is the use case, and their appearing in one story is the association. So the
+diagrams are **derived, not drawn** — which means they cannot drift away from the spec. There is
+no second artefact to keep in sync.
+
+The breakdown is three levels, all expressed in Gherkin with nothing on the side:
+
+| level | where it comes from |
+|---|---|
+| **epic** | an `@epic:` tag on the feature, else the directory under `spec/` |
+| **story** | the feature, plus its `As a / I want / So that` narrative |
+| **task** | one scenario |
+
+```
+$ ratchet tree
+
+EPIC BILLING  7/9 verified
+ ├── STORY Currency presentation
+ │        As a billing clerk, I want amounts shown in the customer's own currency, so that
+ │        an invoice is never misread as the wrong figure
+ │   ├── x red      Euros use the euro sign S-30d6398c
+ │   ├── + green    US dollars lead with the symbol and group thousands S-d36e2796
+ │   └── + green    Yen rounds to whole units rather than truncating [holdout] S-0bae3a95
+ └── STORY Invoice totals
+     ├── ~ stale    An invoice with no line items S-8031be66
+     └── + green    An invoice with several line items S-0c1fba78
+```
+
+`ratchet stories` lists who wants what, and names any feature missing a narrative.
+
+## Diagrams and dashboard
+
+`ratchet diagrams` writes Mermaid to `docs/diagrams/` — three views, all generated from the
+ledger and the spec:
+
+- **use-cases** — actors and the capabilities they want
+- **breakdown** — epic → story → scenario, coloured by verified state
+- **pipeline** — how a request becomes verified behaviour, and who may touch what
+
+`.mmd` plus `.md` wrappers, so they render in GitHub, in pull requests and in most editors with
+no toolchain.
+
+`ratchet dashboard` writes `docs/dashboard.html`: one self-contained file, no network and no
+build step, showing the verified-progress meter, the derived use case diagram, and the full
+breakdown with each scenario's status, id and failing assertion. Light and dark, and it works at
+phone width.
+
+Two deliberate choices in it. Human intent is set in a serif and machine state in a mono, so a
+story's "As a billing clerk…" reads as prose while every id, hash and status reads as fact. And
+the progress meter is drawn as discrete **detents** rather than a bar, one per scenario, because
+a ratchet advances in notches — the ornament encodes a real count.
+
 ## The ledger
 
 `.ratchet/ledger.json` — portable, versioned (`ratchet.ledger/1`), deliberately not tied to any
@@ -131,6 +219,10 @@ ratchet build [--max-turns N]      implementer loop until green, then verify wit
 ratchet run                        run the suite, update the ledger
 ratchet status                     the ledger, as a progress view
 ratchet verify                     standing integrity audit
+ratchet tree                       epic -> story -> scenario, with status
+ratchet stories                    who wants what, and what is missing a narrative
+ratchet diagrams                   Mermaid use-case, breakdown and pipeline diagrams
+ratchet dashboard                  a self-contained HTML dashboard
 ```
 
 ## Backends
@@ -211,6 +303,10 @@ ratchet/
   runner.py         drives pytest-bdd
   pytest_plugin.py  maps pytest-bdd outcomes back to scenario ids
   cli.py
+  narrative.py      user stories: As a / I want / So that
+  config.py         ratchet.toml -- what makes the runner language-agnostic
+  reports.py        Cucumber JSON and Cucumber Messages parsers, bound by @rid tag
+  viz.py            the tree, the Mermaid diagrams, the HTML dashboard
 ```
 
 ## Licence

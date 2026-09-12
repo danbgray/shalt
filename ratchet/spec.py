@@ -23,6 +23,8 @@ from gherkin.token_scanner import TokenScanner
 
 RID_PREFIX = "@rid:"
 HOLDOUT_TAG = "@holdout"
+EPIC_PREFIX = "@epic:"
+EPIC_RE = re.compile(r"@epic:([A-Za-z0-9_.\-]+)")
 RID_RE = re.compile(r"@rid:(S-[0-9a-f]{8})")
 
 
@@ -73,6 +75,11 @@ class Scenario:
     line: int
     tag_lines: list[int] = field(default_factory=list)
     rid_count: int = 0
+    inherited_tags: list[str] = field(default_factory=list)
+
+    @property
+    def all_tags(self) -> list[str]:
+        return list(self.tags) + [t for t in self.inherited_tags if t not in self.tags]
 
     @property
     def block_start(self) -> int:
@@ -82,6 +89,13 @@ class Scenario:
     @property
     def is_holdout(self) -> bool:
         return any(t == HOLDOUT_TAG for t in self.tags)
+
+    @property
+    def epic(self) -> str:
+        for t in self.all_tags:
+            if (m := EPIC_RE.fullmatch(t)):
+                return m.group(1)
+        return ""
 
     @property
     def is_outline(self) -> bool:
@@ -112,6 +126,21 @@ class Feature:
     background: list[str] = field(default_factory=list)
     scenarios: list[Scenario] = field(default_factory=list)
     rule_lines: list[int] = field(default_factory=list)
+    description: str = ""
+
+    @property
+    def story(self):
+        from .narrative import parse_story
+        return parse_story(self.description)
+
+    @property
+    def epic(self) -> str:
+        """The epic this story belongs to: an @epic: tag, else the directory under spec/."""
+        for t in self.tags:
+            if (m := EPIC_RE.fullmatch(t)):
+                return m.group(1)
+        parts = Path(self.file).parts
+        return parts[0] if len(parts) > 1 else ""
 
     def blocks(self, total_lines: int) -> list[tuple[Scenario, int, int]]:
         """(scenario, first line, line after last) -- 1-indexed, end exclusive.
@@ -175,13 +204,19 @@ def parse_text(source: str, rel: str) -> Feature | None:
     rule_lines: list[int] = []
     _walk_children(feat.get("children", []), feat["name"], rel, background, scenarios,
                    rule_lines)
+    feature_tags = [t["name"] for t in feat.get("tags", [])]
+    # Gherkin tag inheritance: a feature-level tag applies to every scenario in it. This is how
+    # one @epic: tag on the feature reaches each scenario without repeating it.
+    for sc in scenarios:
+        sc.inherited_tags = list(feature_tags)
     return Feature(
         name=feat["name"],
         file=rel,
-        tags=[t["name"] for t in feat.get("tags", [])],
+        tags=feature_tags,
         background=background,
         scenarios=scenarios,
         rule_lines=rule_lines,
+        description=feat.get("description", "") or "",
     )
 
 

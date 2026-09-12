@@ -1,4 +1,9 @@
+@epic:billing
 Feature: Invoice totals
+
+  As a billing clerk
+  I want invoice totals computed exactly
+  So that customers are never billed the wrong amount
 
   Scenario: An invoice with a single line item
     Given an invoice with lines:

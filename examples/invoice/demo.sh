@@ -32,3 +32,14 @@ echo
 echo "################ 3. the implementer overfits to what it saw ################"
 bootstrap "$WORK/overfit"
 $R --root "$WORK/overfit" --fixtures "$FIX/overfit" build --max-turns 3
+
+echo
+echo "################ 4. the breakdown ################"
+$R --root "$WORK/honest" tree
+echo
+echo "################ 5. who wants what ################"
+$R --root "$WORK/honest" stories
+echo
+echo "################ 6. diagrams and dashboard ################"
+$R --root "$WORK/honest" diagrams
+$R --root "$WORK/honest" dashboard

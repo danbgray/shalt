@@ -58,6 +58,25 @@ pipeline runs over real HTTP, and the workspace guard still rejects an API-drive
 writes outside its zone. 60 tests. What remains unproven is the model's judgement, not the
 plumbing.
 
+**Language agnostic + breakdown + visuals (follow-up).** The zone model, ledger, identity and
+guards were already language-neutral; only the runner was not, so it moved into `ratchet.toml`
+with presets for Python, JavaScript, Go, Java, Ruby and .NET. The unlock: `@rid:` is a Gherkin
+tag, so it survives into every Cucumber-family report — binding needs no filename matching and
+no per-language shim, which also retired the fragile basename matching the review had flagged.
+Added Cucumber JSON and Cucumber Messages parsers, where skipped/pending/undefined all count as
+not-passed.
+
+The breakdown is epic -> story -> task, expressed entirely in Gherkin: `@epic:` tags (or the
+directory under `spec/`), the feature plus its `As a / I want / So that` narrative, and one
+scenario per task. The key realisation: that narrative sentence *is* a use case diagram, so the
+diagrams are derived rather than drawn and cannot drift. `ratchet tree`, `stories`, `diagrams`
+(Mermaid) and `dashboard` (one self-contained HTML file) all read from the ledger. 92 tests.
+
+**Naming.** "ratchet" is not viable publicly: taken on PyPI, npm and crates, with two prominent
+GitHub projects including one using the same ratcheting metaphor for CI, plus unhelpful slang.
+Shortlist researched and pending a decision; `jumar` (a rope ascender that grips one way only)
+is the leading candidate and is free everywhere checked.
+
 **Known gaps, in priority order:** never run against a live model (fixtures only); no escape
 hatch for non-functional requirements; the stepwright is unverified (mutation testing over step
 definitions is the obvious next move); no cost or turn accounting; Python-only runner.

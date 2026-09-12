@@ -1,40 +1,67 @@
-"""Drive the test suite and fold results back into the ledger."""
+"""Drive whatever test runner the workspace declares, and fold results back into the ledger."""
 from __future__ import annotations
 
-import json
 import os
 import subprocess
-import sys
 import time
 from pathlib import Path
 
+from .config import Config
+from .reports import read_report
 
-def run_suite(root: Path, extra: list[str] | None = None) -> dict:
-    report = root / ".ratchet" / "last_run.json"
+
+def run_suite(root: Path, cfg: Config | None = None) -> dict:
+    root = Path(root)
+    cfg = cfg or Config.load(root)
+    report = root / cfg.report
     if report.exists():
         report.unlink()
-    cmd = [sys.executable, "-m", "pytest", "-q", "--no-header",
-           "-p", "ratchet.pytest_plugin",
-           f"--ratchet-spec={root / 'spec'}",
-           f"--ratchet-report={report}",
-           str(root / "steps")]
+    report.parent.mkdir(parents=True, exist_ok=True)
+
     env = dict(os.environ)
     env["PYTHONPATH"] = os.pathsep.join(
-        [str(root), str(root / "src"), env.get("PYTHONPATH", "")]).strip(os.pathsep)
-    proc = subprocess.run(cmd, cwd=root, capture_output=True, text=True, env=env, timeout=600)
-    data = {"results": {}, "unbound_tests": [], "exitstatus": proc.returncode}
-    if report.exists():
-        data = json.loads(report.read_text(encoding="utf-8"))
-    data["stdout"] = proc.stdout[-8000:]
-    data["stderr"] = proc.stderr[-4000:]
-    data["run_id"] = time.strftime("run-%Y%m%d-%H%M%S", time.gmtime())
-    # 3 = pytest internal error, 4 = bad usage. Those are ours to fix and are worth shouting
-    # about. Exit code 2 (interrupted) is usually a *collection* error -- typically the
-    # implementation does not exist yet -- which is an ordinary red state for the implementer
-    # to work on, not a broken harness.
+        [str(root), str(root / cfg.src), env.get("PYTHONPATH", "")]).strip(os.pathsep)
+    env.update(cfg.env)
+
+    started = time.time()
+    try:
+        if cfg.uses_shell:
+            proc = subprocess.run(cfg.command.format(
+                spec=str(root / "spec"), steps=str(root / cfg.steps),
+                src=str(root / cfg.src), report=str(report), root=str(root)),
+                shell=True, cwd=root, capture_output=True, text=True,
+                env=env, timeout=cfg.timeout)
+        else:
+            proc = subprocess.run(cfg.argv(root), cwd=root, capture_output=True,
+                                  text=True, env=env, timeout=cfg.timeout)
+    except subprocess.TimeoutExpired as e:
+        return {"results": {}, "harness_error": True, "collection_error": "",
+                "stdout": (e.stdout or b"").decode(errors="replace")[-4000:]
+                if isinstance(e.stdout, bytes) else (e.stdout or "")[-4000:],
+                "stderr": f"runner timed out after {cfg.timeout}s",
+                "run_id": time.strftime("run-%Y%m%d-%H%M%S", time.gmtime()),
+                "duration": cfg.timeout}
+    except FileNotFoundError as e:
+        return {"results": {}, "harness_error": True, "collection_error": "",
+                "stdout": "", "stderr": f"runner command not found: {e}. "
+                f"Check [runner].command in ratchet.toml.",
+                "run_id": "run-failed", "duration": 0}
+
+    results = read_report(report, cfg.format)
+    data = {
+        "results": results,
+        "stdout": proc.stdout[-8000:],
+        "stderr": proc.stderr[-4000:],
+        "run_id": time.strftime("run-%Y%m%d-%H%M%S", time.gmtime()),
+        "duration": round(time.time() - started, 2),
+        "returncode": proc.returncode,
+    }
+    # 3 = pytest internal error, 4 = bad usage: ours to fix, worth shouting about. Exit code 2
+    # is usually a collection error -- typically the implementation does not exist yet -- which
+    # is an ordinary red state for the implementer, not a broken harness.
     data["harness_error"] = proc.returncode in (3, 4)
     data["collection_error"] = ""
-    if proc.returncode == 2 or (proc.returncode == 5 and not data["results"]):
+    if not results and proc.returncode != 0:
         data["collection_error"] = (proc.stdout or proc.stderr)[-3000:]
     return data
 
@@ -46,9 +73,9 @@ def harness_report(run: dict) -> str:
 def failure_digest(run: dict, allowed: set[str] | None = None, limit: int = 3) -> str:
     """Compact failing-test context to hand to the implementer.
 
-    `allowed` restricts the digest to scenarios the role is permitted to see. Without it the
-    assertion text of a held-out scenario -- including its expected value -- would be handed
-    straight to the implementer, which defeats the point of holding it out.
+    `allowed` restricts the digest to scenarios the role may see. Without it the assertion text
+    of a held-out scenario -- including its expected value -- would go straight to the
+    implementer, defeating the point of holding it out.
     """
     parts = []
     for rid, r in run.get("results", {}).items():

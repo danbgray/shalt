@@ -34,6 +34,10 @@ class Entry:
     feature: str
     feature_file: str
     tags: list[str] = field(default_factory=list)
+    epic: str = ""
+    actor: str = ""
+    capability: str = ""
+    benefit: str = ""
     status: str = PENDING
     spec_hash: str = ""
     verified_spec_hash: str = ""   # the hash this scenario was last GREEN against
@@ -100,14 +104,20 @@ class Ledger:
                 h = s.spec_hash(f.background)
                 e = self.entries.get(s.rid)
                 if e is None:
+                    st = f.story
                     e = Entry(rid=s.rid, name=s.name, feature=f.name,
-                              feature_file=f.file, tags=list(s.tags), spec_hash=h)
+                              feature_file=f.file, tags=list(s.all_tags), spec_hash=h,
+                              epic=s.epic or f.epic, actor=st.actor,
+                              capability=st.capability, benefit=st.benefit)
                     e.record("added", spec_hash=h)
                     self.entries[s.rid] = e
                     stats["added"] += 1
                     continue
                 e.name, e.feature, e.feature_file = s.name, f.name, f.file
-                e.tags = list(s.tags)
+                e.tags = list(s.all_tags)
+                st = f.story
+                e.epic, e.actor = s.epic or f.epic, st.actor
+                e.capability, e.benefit = st.capability, st.benefit
                 if e.status == ORPHAN:
                     # orphan is not an absorbing state; a restored scenario must prove itself
                     e.status = PENDING
