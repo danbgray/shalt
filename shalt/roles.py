@@ -95,12 +95,12 @@ def _mirror_back(stage: Path, root: Path, zones: tuple[str, ...]) -> tuple[list[
 def run_role(root: Path, role: str, prompt: str, backend, *,
              hide_holdouts: bool = False) -> RoleResult:
     root = Path(root).resolve()
-    parent = Path(tempfile.mkdtemp(prefix="ratchet-stage-"))
+    parent = Path(tempfile.mkdtemp(prefix="shalt-stage-"))
     stage = parent / role
     try:
         _stage_for(root, role, stage, hide_holdouts)
         before = snapshot(stage, ALL_ZONES)
-        with GuardedTurn(root, role, root / ".ratchet" / "backup"):
+        with GuardedTurn(root, role, root / ".shalt" / "backup"):
             transcript = backend.run(role, prompt, stage)
 
             offences = _stage_offences(stage, role)

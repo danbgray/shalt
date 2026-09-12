@@ -1,4 +1,4 @@
-"""pytest plugin that maps pytest-bdd scenario outcomes back to ratchet rids.
+"""pytest plugin that maps pytest-bdd scenario outcomes back to shalt rids.
 
 Binding is done on (feature file basename, scenario name) rather than on Gherkin tags, so it
 does not depend on how the runner turns tags into markers. Scenario Outlines produce one test
@@ -9,28 +9,28 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ratchet.spec import RID_RE
+from shalt.spec import RID_RE
 
 _STATE: dict = {"map": {}, "node_to_key": {}, "node_to_rid": {}, "outcomes": {},
                 "report": None, "spec_dir": None}
 
 
 def pytest_addoption(parser):
-    g = parser.getgroup("ratchet")
-    g.addoption("--ratchet-spec", default=None, help="ratchet spec/ directory")
-    g.addoption("--ratchet-report", default=None, help="where to write the ratchet run report")
+    g = parser.getgroup("shalt")
+    g.addoption("--shalt-spec", default=None, help="shalt spec/ directory")
+    g.addoption("--shalt-report", default=None, help="where to write the shalt run report")
 
 
 def pytest_configure(config):
-    spec = config.getoption("--ratchet-spec")
-    report = config.getoption("--ratchet-report")
+    spec = config.getoption("--shalt-spec")
+    report = config.getoption("--shalt-report")
     _STATE["report"] = Path(report) if report else None
     _STATE["map"] = {}
     _STATE["node_to_key"] = {}
     _STATE["node_to_rid"] = {}
     _STATE["outcomes"] = {}
     if spec:
-        from ratchet.spec import load_specs
+        from shalt.spec import load_specs
         spec_dir = Path(spec).resolve()
         _STATE["spec_dir"] = spec_dir
         for f in load_specs(spec_dir, strict=False):

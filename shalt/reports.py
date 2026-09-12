@@ -118,14 +118,14 @@ def parse_cucumber_messages(text: str) -> dict[str, dict[str, Any]]:
     return results
 
 
-def parse_ratchet(text: str) -> dict[str, dict[str, Any]]:
-    """ratchet's own pytest plugin report."""
+def parse_native(text: str) -> dict[str, dict[str, Any]]:
+    """Shalt's own pytest plugin report format."""
     data = json.loads(text)
     return data.get("results", {})
 
 
 PARSERS = {
-    "ratchet": parse_ratchet,
+    "shalt": parse_native,
     "cucumber-json": parse_cucumber_json,
     "cucumber-messages": parse_cucumber_messages,
 }

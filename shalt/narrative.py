@@ -63,7 +63,7 @@ class Story:
 def parse_story(description: str) -> Story:
     """Pull the user story out of a feature description block. Tolerant: a description that
     is not a user story yields an empty Story rather than an error, and `missing` says what a
-    partial one lacks so `ratchet verify` can nag about it."""
+    partial one lacks so `shalt verify` can nag about it."""
     text = description or ""
     def grab(rx):
         m = rx.search(text)

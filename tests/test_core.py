@@ -3,9 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from ratchet.integrity import GuardedTurn, IntegrityViolation, snapshot, diff
-from ratchet.ledger import GREEN, PENDING, RED, STALE, Ledger
-from ratchet.spec import load_specs, stamp_rids, strip_holdouts, holdout_rids
+from shalt.integrity import GuardedTurn, IntegrityViolation, snapshot, diff
+from shalt.ledger import GREEN, PENDING, RED, STALE, Ledger
+from shalt.spec import load_specs, stamp_rids, strip_holdouts, holdout_rids
 
 FEATURE = """\
 Feature: Money
@@ -129,7 +129,7 @@ def test_blocked_suite_reports_red_not_pending(tmp_path):
 def test_ledger_round_trips(tmp_path):
     d = write_spec(tmp_path); stamp_rids(d)
     led, _ = _ledger_for(d)
-    path = tmp_path / ".ratchet" / "ledger.json"
+    path = tmp_path / ".shalt" / "ledger.json"
     led.save(path)
     again = Ledger.load(path)
     assert set(again.entries) == set(led.entries)
@@ -159,7 +159,7 @@ def test_implementer_editing_the_tests_is_rejected_and_rolled_back(tmp_path):
     root = _workspace(tmp_path)
     original = (root / "steps" / "test_x.py").read_text()
     with pytest.raises(IntegrityViolation) as ei:
-        with GuardedTurn(root, "implementer", root / ".ratchet" / "backup"):
+        with GuardedTurn(root, "implementer", root / ".shalt" / "backup"):
             (root / "src" / "x.py").write_text("ok\n")
             (root / "steps" / "test_x.py").write_text("assert False  # weakened\n")
     assert "steps" in ei.value.offences
@@ -168,7 +168,7 @@ def test_implementer_editing_the_tests_is_rejected_and_rolled_back(tmp_path):
 
 def test_implementer_writing_only_to_src_is_allowed(tmp_path):
     root = _workspace(tmp_path)
-    with GuardedTurn(root, "implementer", root / ".ratchet" / "backup"):
+    with GuardedTurn(root, "implementer", root / ".shalt" / "backup"):
         (root / "src" / "x.py").write_text("ok\n")
     assert (root / "src" / "x.py").exists()
 
@@ -176,7 +176,7 @@ def test_implementer_writing_only_to_src_is_allowed(tmp_path):
 def test_stepwright_cannot_touch_the_spec(tmp_path):
     root = _workspace(tmp_path)
     with pytest.raises(IntegrityViolation):
-        with GuardedTurn(root, "stepwright", root / ".ratchet" / "backup"):
+        with GuardedTurn(root, "stepwright", root / ".shalt" / "backup"):
             (root / "spec" / "x.feature").write_text("Feature: rewritten\n")
 
 

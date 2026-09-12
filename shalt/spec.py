@@ -8,7 +8,7 @@ The second load-bearing idea: a scenario's *canonical hash* covers everything th
 its meaning (steps, tables, docstrings, background, non-rid tags) and nothing that doesn't
 (whitespace, ordering of tags, the rid itself). Green status in the ledger is always bound
 to a canonical hash. Change the meaning, and green evaporates -- it does not silently carry
-over. That is the ratchet.
+over. That is the shalt.
 """
 from __future__ import annotations
 

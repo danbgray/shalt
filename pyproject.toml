@@ -3,17 +3,17 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ratchet-bdd"
+name = "shalt"
 version = "0.1.0"
 description = "BDD for agentic workflows: English -> Gherkin -> tests -> build, with a spec-bound ledger."
 requires-python = ">=3.10"
 dependencies = ["gherkin-official>=29", "pytest>=8", "pytest-bdd>=8"]
 
 [project.scripts]
-ratchet = "ratchet.cli:main"
+shalt = "shalt.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["ratchet*"]
+include = ["shalt*"]
 
 [tool.pytest.ini_options]
 markers = ["slow: needs a full test-suite run per mutant"]

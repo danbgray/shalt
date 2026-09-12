@@ -10,7 +10,7 @@ Status meanings, which the whole product rests on:
   stale    was green, but the scenario's meaning changed since -- green does not carry over
   orphan   a test claims an rid that no longer exists in the spec
 
-The ratchet invariant: green is always relative to a spec hash. Edit the spec and the green
+The shalt invariant: green is always relative to a spec hash. Edit the spec and the green
 evaporates rather than silently persisting. This is what stops the oldest fraud in test-driven
 work -- the spec drifted, the suite still passes, and nobody noticed.
 """
@@ -22,7 +22,7 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any
 
-SCHEMA = "ratchet.ledger/1"
+SCHEMA = "shalt.ledger/1"
 
 PENDING, RED, GREEN, STALE, ORPHAN = "pending", "red", "green", "stale", "orphan"
 

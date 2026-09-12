@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from ratchet.integrity import IntegrityViolation
-from ratchet.ledger import Ledger
-from ratchet.roles import run_role
+from shalt.integrity import IntegrityViolation
+from shalt.ledger import Ledger
+from shalt.roles import run_role
 
 FEATURE = """\
 Feature: Money
@@ -25,11 +25,11 @@ TEST_SRC = "def test_real():\n    assert True\n"
 
 @pytest.fixture
 def workspace(tmp_path):
-    for z in ("spec", "steps", "contract", "src", ".ratchet"):
+    for z in ("spec", "steps", "contract", "src", ".shalt"):
         (tmp_path / z).mkdir(parents=True, exist_ok=True)
     (tmp_path / "spec" / "money.feature").write_text(FEATURE)
     (tmp_path / "steps" / "test_money.py").write_text(TEST_SRC)
-    Ledger().save(tmp_path / ".ratchet" / "ledger.json")
+    Ledger().save(tmp_path / ".shalt" / "ledger.json")
     return tmp_path
 
 
@@ -93,13 +93,13 @@ def test_symlinked_file_masquerading_as_a_source_module_is_rejected(workspace):
 def test_a_role_cannot_rewrite_the_ledger(workspace):
     def act(stage):
         (stage / "src" / "ok.py").write_text("x = 1\n")
-        (workspace / ".ratchet" / "ledger.json").write_text(
-            '{"schema": "ratchet.ledger/1", "scenarios": {}, '
+        (workspace / ".shalt" / "ledger.json").write_text(
+            '{"schema": "shalt.ledger/1", "scenarios": {}, '
             '"spec_lock": {"approved_by": "nobody"}}')
     with pytest.raises(IntegrityViolation) as ei:
         run_role(workspace, "implementer", "p", _Backend(act))
     assert "ledger" in ei.value.offences
-    assert Ledger.load(workspace / ".ratchet" / "ledger.json").spec_lock == {}
+    assert Ledger.load(workspace / ".shalt" / "ledger.json").spec_lock == {}
 
 
 def test_a_file_at_the_stage_root_is_rejected(workspace):

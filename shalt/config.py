@@ -1,4 +1,4 @@
-"""Workspace configuration -- what makes ratchet language-agnostic.
+"""Workspace configuration -- what makes shalt language-agnostic.
 
 The zone model, the scenario ledger, identity and the guards are all language-neutral already.
 The only Python-specific part was the runner. This file moves that out into configuration: a
@@ -19,10 +19,10 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     tomllib = None
 
-CONFIG_NAME = "ratchet.toml"
+CONFIG_NAME = "shalt.toml"
 
-# Formats ratchet can read back from a test run.
-FORMATS = ("ratchet", "cucumber-json", "cucumber-messages")
+# Formats shalt can read back from a test run.
+FORMATS = ("shalt", "cucumber-json", "cucumber-messages")
 
 
 @dataclass
@@ -36,25 +36,25 @@ class Preset:
     note: str = ""
 
 
-# Starting points, not guarantees -- each needs its own toolchain present. `ratchet init --stack`
-# writes one of these into ratchet.toml for editing.
+# Starting points, not guarantees -- each needs its own toolchain present. `shalt init --stack`
+# writes one of these into shalt.toml for editing.
 PRESETS: dict[str, Preset] = {
     "python": Preset(
         "Python / pytest-bdd",
-        "python -m pytest -q --no-header -p ratchet.pytest_plugin "
-        "--ratchet-spec={spec} --ratchet-report={report} {steps}",
-        "ratchet", ".ratchet/last_run.json",
-        note="Native: binds by rid through ratchet's own pytest plugin."),
+        "python -m pytest -q --no-header -p shalt.pytest_plugin "
+        "--shalt-spec={spec} --shalt-report={report} {steps}",
+        "shalt", ".shalt/last_run.json",
+        note="Native: binds by rid through shalt's own pytest plugin."),
     "javascript": Preset(
         "JavaScript / cucumber-js",
         "npx cucumber-js {spec} --require {steps} --format message:{report}",
-        "cucumber-messages", ".ratchet/messages.ndjson",
+        "cucumber-messages", ".shalt/messages.ndjson",
         src="src", steps="steps",
         note="Needs @cucumber/cucumber installed in the workspace."),
     "go": Preset(
         "Go / godog",
         "godog run --format=cucumber --paths={spec} > {report}",
-        "cucumber-json", ".ratchet/cucumber.json",
+        "cucumber-json", ".shalt/cucumber.json",
         src="internal", steps="features",
         note="godog writes the report to stdout, hence the redirect."),
     "java": Preset(
@@ -67,12 +67,12 @@ PRESETS: dict[str, Preset] = {
     "ruby": Preset(
         "Ruby / cucumber",
         "bundle exec cucumber {spec} -r {steps} --format json --out {report}",
-        "cucumber-json", ".ratchet/cucumber.json",
+        "cucumber-json", ".shalt/cucumber.json",
         src="lib", steps="features/step_definitions"),
     "dotnet": Preset(
         ".NET / Reqnroll",
         "dotnet test -- Reqnroll.Output.Cucumber={report}",
-        "cucumber-json", ".ratchet/cucumber.json",
+        "cucumber-json", ".shalt/cucumber.json",
         src="src", steps="Tests"),
 }
 
@@ -80,8 +80,8 @@ PRESETS: dict[str, Preset] = {
 @dataclass
 class Config:
     command: str = PRESETS["python"].command
-    format: str = "ratchet"
-    report: str = ".ratchet/last_run.json"
+    format: str = "shalt"
+    report: str = ".shalt/last_run.json"
     src: str = "src"
     steps: str = "steps"
     stack: str = "python"
@@ -95,13 +95,13 @@ class Config:
         if not path.exists():
             return cls()
         if tomllib is None:  # pragma: no cover
-            raise RuntimeError("reading ratchet.toml needs Python 3.11+ (tomllib)")
+            raise RuntimeError("reading shalt.toml needs Python 3.11+ (tomllib)")
         raw = tomllib.loads(path.read_text(encoding="utf-8"))
         proj, runner, zones = (raw.get("project", {}), raw.get("runner", {}),
                               raw.get("zones", {}))
         cfg = cls(
             command=runner.get("command", cls.command),
-            format=runner.get("format", "ratchet"),
+            format=runner.get("format", "shalt"),
             report=runner.get("report", cls.report),
             src=zones.get("src", "src"),
             steps=zones.get("steps", "steps"),
@@ -134,9 +134,9 @@ def write_config(root: Path, stack: str, name: str = "") -> Preset:
     if stack not in PRESETS:
         raise ValueError(f"unknown stack {stack!r}; expected one of {', '.join(PRESETS)}")
     p = PRESETS[stack]
-    body = f'''# ratchet workspace configuration
+    body = f'''# shalt workspace configuration
 #
-# ratchet is language-agnostic: the zone model, the ledger, scenario identity and the write
+# shalt is language-agnostic: the zone model, the ledger, scenario identity and the write
 # guards are all language-neutral. Only the runner is not, so it lives here.
 #
 # Scenario binding is by the @rid: tag stamped into each scenario at approval, and that tag
@@ -154,7 +154,7 @@ src = "{p.src}"                       # implementation; written by the implement
 [runner]
 # {p.note or "Placeholders: {spec} {steps} {src} {report} {root}"}
 command = "{p.command}"
-format = "{p.format}"                 # ratchet | cucumber-json | cucumber-messages
+format = "{p.format}"                 # shalt | cucumber-json | cucumber-messages
 report = "{p.report}"
 timeout = 900
 '''

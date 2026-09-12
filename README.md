@@ -1,7 +1,25 @@
-# Ratchet
+# Shalt
 
-**BDD for agentic workflows.** English prompt → Gherkin → step definitions → build, with a
-ledger whose "green" you can actually trust.
+**English sentence → formalized logic → tests → code.** A plain request becomes user stories,
+then Gherkin scenarios you approve as the contract; isolated agents write the tests, then the
+implementation, until every scenario passes — recorded in a ledger whose "green" you can
+actually trust.
+
+`shalt` on PyPI · `@rivlet/shalt` on npm · CLI: `shalt`
+
+### Why "Shalt"
+
+Requirements have been written in one grammatical form for fifty years: **"the system shall…"**
+[RFC 2119](https://www.rfc-editor.org/rfc/rfc2119) makes SHALL and MUST the normative keywords —
+the ones that state an absolute requirement rather than a preference — and
+[EARS](https://alistairmavin.com/ears/) builds its whole requirements syntax on top of that verb.
+
+`shalt` is that word turned to face the system. You are not describing what the software does;
+you are stating what it *shall* do, and then holding it to that. Which is the distinction the
+whole tool rests on: a specification is not a claim about what is true, it is an obligation about
+what must hold. The ledger records which obligations are upheld, and the rule below follows
+directly — an obligation is owed against its exact wording, so reword it and nothing has been
+discharged.
 
 Status: working prototype. The full loop runs offline, with no API key, via recorded fixtures.
 
@@ -22,20 +40,20 @@ it politely in a prompt.
 ## Language agnostic
 
 The zone model, scenario identity, the ledger and the guards are all language-neutral. Only the
-runner is not, so it lives in `ratchet.toml`:
+runner is not, so it lives in `shalt.toml`:
 
 ```toml
 [runner]
 command = "npx cucumber-js {spec} --require {steps} --format message:{report}"
-format  = "cucumber-messages"     # ratchet | cucumber-json | cucumber-messages
-report  = ".ratchet/messages.ndjson"
+format  = "cucumber-messages"     # shalt | cucumber-json | cucumber-messages
+report  = ".shalt/messages.ndjson"
 ```
 
 The reason this works cleanly: **`@rid:` is a Gherkin tag, and a tag survives into every
 Cucumber-family report.** So binding a result back to a scenario needs no filename matching, no
 per-language shim, and no guessing — the identity is carried in the report itself.
 
-`ratchet init --stack <python|javascript|go|java|ruby|dotnet>` writes a starting config for that
+`shalt init --stack <python|javascript|go|java|ruby|dotnet>` writes a starting config for that
 toolchain. Anything that emits Cucumber JSON or Cucumber Messages works without new code.
 
 One rule the parsers enforce: a scenario is green only if **every** step passed. Skipped,
@@ -90,15 +108,17 @@ At approval time, every scenario is stamped with a durable id:
 Rename it, reword it, move it to another file — the ledger still tracks the same scenario.
 Delete the tag and you have deleted the scenario, explicitly.
 
-## The ratchet
+## An obligation is bound to its wording
 
 A scenario's **canonical hash** covers everything that changes its meaning (steps, tables,
 docstrings, background, tags) and nothing that doesn't (whitespace, tag order, the id itself).
-Green is always recorded *against a canonical hash*.
+A scenario is recorded as upheld *against a canonical hash*.
 
-Change what a scenario means and its green evaporates — it goes `stale`, not green. This is the
-one rule that stops the oldest failure in spec-driven work: the spec drifted, the suite still
-passes, nobody noticed.
+Change what the scenario means and the status goes `stale`, not green. The obligation was owed
+against particular words; reword it and nothing has been discharged.
+
+This is the one rule that stops the oldest failure in spec-driven work: the spec drifted, the
+suite still passes, nobody noticed.
 
 ```
   + green    A half-cent total rounds up, not down      S-2e8e2670
@@ -157,7 +177,7 @@ The breakdown is three levels, all expressed in Gherkin with nothing on the side
 | **task** | one scenario |
 
 ```
-$ ratchet tree
+$ shalt tree
 
 EPIC BILLING  7/9 verified
  ├── STORY Currency presentation
@@ -171,11 +191,11 @@ EPIC BILLING  7/9 verified
      └── + green    An invoice with several line items S-0c1fba78
 ```
 
-`ratchet stories` lists who wants what, and names any feature missing a narrative.
+`shalt stories` lists who wants what, and names any feature missing a narrative.
 
 ## Diagrams and dashboard
 
-`ratchet diagrams` writes Mermaid to `docs/diagrams/` — three views, all generated from the
+`shalt diagrams` writes Mermaid to `docs/diagrams/` — three views, all generated from the
 ledger and the spec:
 
 - **use-cases** — actors and the capabilities they want
@@ -185,15 +205,16 @@ ledger and the spec:
 `.mmd` plus `.md` wrappers, so they render in GitHub, in pull requests and in most editors with
 no toolchain.
 
-`ratchet dashboard` writes `docs/dashboard.html`: one self-contained file, no network and no
+`shalt dashboard` writes `docs/dashboard.html`: one self-contained file, no network and no
 build step, showing the verified-progress meter, the derived use case diagram, and the full
 breakdown with each scenario's status, id and failing assertion. Light and dark, and it works at
 phone width.
 
 Two deliberate choices in it. Human intent is set in a serif and machine state in a mono, so a
 story's "As a billing clerk…" reads as prose while every id, hash and status reads as fact. And
-the progress meter is drawn as discrete **detents** rather than a bar, one per scenario, because
-a ratchet advances in notches — the ornament encodes a real count.
+the progress meter is drawn as discrete notches rather than a smooth bar — one per scenario,
+because obligations are discrete. A scenario is either upheld or it is not; there is no such
+thing as 63% of a scenario, so the ornament encodes a real count instead of a percentage.
 
 ## Mutation-testing the oracle
 
@@ -203,7 +224,7 @@ above checks that the generated step definitions actually assert what their scen
 step definition ending in `assert result is not None` passes every time, and the ledger shows
 green.
 
-`ratchet mutate` runs the check in the opposite direction to the obvious one: rather than
+`shalt mutate` runs the check in the opposite direction to the obvious one: rather than
 mutating the step definitions, it mutates the **implementation** and asks whether the scenarios
 notice. Break the rounding rule; if "a half-cent total rounds up" stays green, that scenario is
 not testing rounding, whatever its name says.
@@ -260,7 +281,7 @@ boolean literals); `text` is deliberately crude and works on Go, JavaScript, Jav
 
 ## The ledger
 
-`.ratchet/ledger.json` — portable, versioned (`ratchet.ledger/1`), deliberately not tied to any
+`.shalt/ledger.json` — portable, versioned (`shalt.ledger/1`), deliberately not tied to any
 runner or vendor. One artifact that is simultaneously the requirement, the test binding, the
 ticket, and the progress bar:
 
@@ -274,19 +295,19 @@ green and green expires when the spec moves.
 ## Commands
 
 ```
-ratchet init                       scaffold a workspace
-ratchet author "<request>"         English -> Gherkin under spec/
-ratchet approve --by <you>         human sign-off; stamps ids, locks the spec
-ratchet steps                      stepwright writes steps/ + contract/
-ratchet build [--max-turns N]      implementer loop until green, then verify with holdouts
-ratchet run                        run the suite, update the ledger
-ratchet status                     the ledger, as a progress view
-ratchet verify                     standing integrity audit
-ratchet tree                       epic -> story -> scenario, with status
-ratchet stories                    who wants what, and what is missing a narrative
-ratchet diagrams                   Mermaid use-case, breakdown and pipeline diagrams
-ratchet dashboard                  a self-contained HTML dashboard
-ratchet mutate                     mutation-test the oracle: do the scenarios mean anything?
+shalt init                       scaffold a workspace
+shalt author "<request>"         English -> Gherkin under spec/
+shalt approve --by <you>         human sign-off; stamps ids, locks the spec
+shalt steps                      stepwright writes steps/ + contract/
+shalt build [--max-turns N]      implementer loop until green, then verify with holdouts
+shalt run                        run the suite, update the ledger
+shalt status                     the ledger, as a progress view
+shalt verify                     standing integrity audit
+shalt tree                       epic -> story -> scenario, with status
+shalt stories                    who wants what, and what is missing a narrative
+shalt diagrams                   Mermaid use-case, breakdown and pipeline diagrams
+shalt dashboard                  a self-contained HTML dashboard
+shalt mutate                     mutation-test the oracle: do the scenarios mean anything?
 ```
 
 ## Backends
@@ -304,13 +325,13 @@ Adding a backend is one class with a `run(role, prompt, stage)` method.
 
 ```bash
 export XAI_API_KEY=...
-ratchet --root ./work init
-ratchet --root ./work --backend grok author "<what you want built>"
+shalt --root ./work init
+shalt --root ./work --backend grok author "<what you want built>"
 $EDITOR work/spec/*.feature          # this is the review gate; it is the cheap one
-ratchet --root ./work approve --by you@example.com
-ratchet --root ./work --backend grok steps
-ratchet --root ./work --backend grok build --max-turns 8
-ratchet --root ./work verify
+shalt --root ./work approve --by you@example.com
+shalt --root ./work --backend grok steps
+shalt --root ./work --backend grok build --max-turns 8
+shalt --root ./work verify
 ```
 
 `--model` overrides the default (`grok-4`); if that name is wrong the error lists what your key
@@ -333,7 +354,7 @@ Demonstrated, end to end, in `examples/invoice/demo.sh` and the 37 tests:
 - a stepwright that writes assertions testing nothing is caught by mutation testing
 - held-out scenarios' failure text is never shown to the implementer
 - editing an approved scenario stales exactly that scenario's green and no other
-- `ratchet verify` detects any edit, addition or deletion made since sign-off
+- `shalt verify` detects any edit, addition or deletion made since sign-off
 - breaking a passing scenario, or deleting the test that proved it, is recorded as a regression
 - deleting failing scenarios does not silently inflate the completion figure
 
@@ -356,7 +377,7 @@ Not yet addressed, in rough order of how much they matter:
 ## Layout
 
 ```
-ratchet/
+shalt/
   spec.py           Gherkin parsing, scenario identity, canonical hashing, holdouts
   ledger.py         the scenario ledger and its status rules
   integrity.py      zones, write guards, rollback, standing audit
@@ -366,7 +387,7 @@ ratchet/
   pytest_plugin.py  maps pytest-bdd outcomes back to scenario ids
   cli.py
   narrative.py      user stories: As a / I want / So that
-  config.py         ratchet.toml -- what makes the runner language-agnostic
+  config.py         shalt.toml -- what makes the runner language-agnostic
   reports.py        Cucumber JSON and Cucumber Messages parsers, bound by @rid tag
   viz.py            the tree, the Mermaid diagrams, the HTML dashboard
   mutate.py         mutation testing: is the oracle actually asserting anything?

@@ -1,4 +1,4 @@
-# Ratchet — thin end-to-end slice
+# Shalt — thin end-to-end slice
 
 **Goal:** prove or kill the core claim — an English prompt becomes Gherkin a human approves,
 which becomes step definitions written by an *isolated* agent, against which an implementer
@@ -12,7 +12,7 @@ agent builds until green, with a ledger whose "green" is trustworthy.
 - [x] 1. Scaffold repo, pyproject, package layout
 - [x] 2. Spec model: parse Gherkin -> stable scenario IDs (`F-001/S-002`)
 - [x] 3. Integrity engine: content hashing, spec lock, write-guard, turn verification
-- [x] 4. Ledger: portable versioned JSON, scenario status, ratchet rule (green never silently regresses)
+- [x] 4. Ledger: portable versioned JSON, scenario status, shalt rule (green never silently regresses)
 - [x] 5. Runner: drive pytest-bdd, parse per-scenario outcomes back into the ledger
 - [x] 6. Role adapters: pluggable backends (fixture / claude-cli / anthropic) for author, stepwright, implementer
 - [x] 7. CLI: init, author, approve, steps, build, status, verify
@@ -24,7 +24,7 @@ agent builds until green, with a ledger whose "green" is trustworthy.
 
 **Outcome: the thin slice works, and the core claim survives adversarial testing.**
 
-Built `ratchet`: four zones (`spec/`, `steps/`, `contract/`, `src/`), three agent roles staged
+Built `shalt`: four zones (`spec/`, `steps/`, `contract/`, `src/`), three agent roles staged
 into directories containing only what each may read, a portable scenario ledger, and a CLI.
 37 tests; `examples/invoice/demo.sh` runs all three demos offline with no API key.
 
@@ -59,7 +59,7 @@ writes outside its zone. 60 tests. What remains unproven is the model's judgemen
 plumbing.
 
 **Language agnostic + breakdown + visuals (follow-up).** The zone model, ledger, identity and
-guards were already language-neutral; only the runner was not, so it moved into `ratchet.toml`
+guards were already language-neutral; only the runner was not, so it moved into `shalt.toml`
 with presets for Python, JavaScript, Go, Java, Ruby and .NET. The unlock: `@rid:` is a Gherkin
 tag, so it survives into every Cucumber-family report — binding needs no filename matching and
 no per-language shim, which also retired the fragile basename matching the review had flagged.
@@ -69,16 +69,38 @@ not-passed.
 The breakdown is epic -> story -> task, expressed entirely in Gherkin: `@epic:` tags (or the
 directory under `spec/`), the feature plus its `As a / I want / So that` narrative, and one
 scenario per task. The key realisation: that narrative sentence *is* a use case diagram, so the
-diagrams are derived rather than drawn and cannot drift. `ratchet tree`, `stories`, `diagrams`
+diagrams are derived rather than drawn and cannot drift. `shalt tree`, `stories`, `diagrams`
 (Mermaid) and `dashboard` (one self-contained HTML file) all read from the ledger. 92 tests.
 
-**Naming.** "ratchet" is not viable publicly: taken on PyPI, npm and crates, with two prominent
+**Naming (settled).** Renamed to **shalt** — `shalt` on PyPI, `@rivlet/shalt` on npm, CLI
+`shalt`. The reasoning: "the system shall..." is the canonical form of a requirement (RFC 2119
+normative keyword, the backbone of EARS syntax), and `shalt` is that verb turned to face the
+system. A spec is not a claim about what is true, it is an obligation about what must hold — so
+the ledger says `upheld`, and an obligation is owed against its exact wording.
+
+Rejected along the way, with reasons worth keeping: **ratchet** (taken on all three registries,
+plus `sethvargo/ratchet` uses the same metaphor for CI, plus slang); **entails** (sounds like
+"entrails"); **deontic** (deontic.ai is a live imec.istart company doing structurally the same
+pipeline — natural-language regulation → extracted requirements → executable scenarios → V&V —
+with an EU international registration in classes 9/35/42: a product-shape collision, not a name
+collision); **realizer** (buildable but Realizer GmbH holds a live mark whose German/international
+specification may be broader than the US 6/7 extension — unverified, EUIPO unreachable);
+**succedent** (came back completely clean, but reads one consonant from "decedent" and every
+short form of the CLI is bad). Gherkin puns were dropped on principle: GHERKIN is not registered
+for software, but every surviving gherkin-derived tool is a *complement*, and a substitute for
+the same class-9 buyers is where confusion analysis gets uncomfortable.
+
+Standing caveat: USPTO primary, EUIPO, UK IPO, WIPO and DPMA were all refused at the network
+layer in this environment. Everything above is third-party mirrors of the US register. A paid
+clearance search is still outstanding.
+
+**Old note — "shalt" is not viable publicly: taken on PyPI, npm and crates, with two prominent
 GitHub projects including one using the same ratcheting metaphor for CI, plus unhelpful slang.
 Shortlist researched and pending a decision; `jumar` (a rope ascender that grips one way only)
 is the leading candidate and is free everywhere checked.
 
 **Mutation testing the oracle (follow-up).** Closed the last unguarded link: nothing checked
-that the stepwright's assertions test anything. `ratchet mutate` mutates the *implementation*
+that the stepwright's assertions test anything. `shalt mutate` mutates the *implementation*
 and asks which scenarios notice, attributing each kill to specific scenarios so every scenario
 gets its own oracle-strength count. A scenario's kills also reveal which files it provably
 executes, which gives coverage-like attribution with no language-specific coverage tool.

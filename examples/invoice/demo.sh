@@ -3,8 +3,8 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FIX="$HERE/fixtures"
-WORK="${1:-/tmp/ratchet-demo}"
-R="python3 -m ratchet.cli"
+WORK="${1:-/tmp/shalt-demo}"
+R="python3 -m shalt.cli"
 
 bootstrap () {  # $1 = workspace
   rm -rf "$1"
@@ -59,4 +59,4 @@ bootstrap_weak "$WORK/weak"
 $R --root "$WORK/weak" status | tail -2
 echo
 echo "# 100% green. now break the implementation and see which scenarios notice:"
-$R --root "$WORK/weak" mutate --budget 12 || true
+$R --root "$WORK/weak" mutate --budget 30 || true

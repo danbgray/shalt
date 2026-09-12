@@ -4,12 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from ratchet.config import Config, PRESETS, write_config
-from ratchet.ledger import Ledger
-from ratchet.narrative import parse_story, slug
-from ratchet.reports import parse_cucumber_json, parse_cucumber_messages, read_report
-from ratchet.spec import load_specs, stamp_rids
-from ratchet.viz import (actors, build_tree, dashboard_html, mermaid_hierarchy,
+from shalt.config import Config, PRESETS, write_config
+from shalt.ledger import Ledger
+from shalt.narrative import parse_story, slug
+from shalt.reports import parse_cucumber_json, parse_cucumber_messages, read_report
+from shalt.spec import load_specs, stamp_rids
+from shalt.viz import (actors, build_tree, dashboard_html, mermaid_hierarchy,
                          mermaid_pipeline, mermaid_usecase, roll_up, terse_failure)
 
 TWO_EPICS = {
@@ -209,7 +209,7 @@ def test_every_preset_writes_a_loadable_config(tmp_path):
         write_config(root, stack)
         cfg = Config.load(root)
         assert cfg.stack == stack
-        assert cfg.format in ("ratchet", "cucumber-json", "cucumber-messages")
+        assert cfg.format in ("shalt", "cucumber-json", "cucumber-messages")
         assert "{report}" in cfg.command or "{spec}" in cfg.command
 
 
@@ -222,7 +222,7 @@ def test_config_substitutes_workspace_paths(tmp_path):
 
 
 def test_an_unknown_report_format_is_rejected(tmp_path):
-    (tmp_path / "ratchet.toml").write_text(
+    (tmp_path / "shalt.toml").write_text(
         '[runner]\nformat = "junit-xml"\ncommand = "true"\n')
     with pytest.raises(ValueError, match="unknown runner format"):
         Config.load(tmp_path)

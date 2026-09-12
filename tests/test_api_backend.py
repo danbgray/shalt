@@ -11,10 +11,10 @@ from pathlib import Path
 
 import pytest
 
-from ratchet.api_backend import OpenAICompatBackend, ToolPathError, _safe_path, _dispatch
-from ratchet.integrity import IntegrityViolation
-from ratchet.ledger import Ledger
-from ratchet.roles import run_role
+from shalt.api_backend import OpenAICompatBackend, ToolPathError, _safe_path, _dispatch
+from shalt.integrity import IntegrityViolation
+from shalt.ledger import Ledger
+from shalt.roles import run_role
 
 from mock_llm import MockChat, fixture_responder, reply, role_of, tool_call
 
@@ -151,10 +151,10 @@ def test_usage_is_accumulated(tmp_path):
 def test_the_workspace_guard_still_applies_to_an_api_driven_role(tmp_path):
     """The tool sandbox is the first layer, not the guarantee. If a tool call ever landed
     outside the role's zone, run_role must still reject the turn."""
-    for z in ("spec", "steps", "contract", "src", ".ratchet"):
+    for z in ("spec", "steps", "contract", "src", ".shalt"):
         (tmp_path / z).mkdir(parents=True, exist_ok=True)
     (tmp_path / "steps" / "test_x.py").write_text("def test_real():\n    assert True\n")
-    Ledger().save(tmp_path / ".ratchet" / "ledger.json")
+    Ledger().save(tmp_path / ".shalt" / "ledger.json")
 
     def responder(payload, i):
         if i == 0:
@@ -179,7 +179,7 @@ def test_full_pipeline_runs_over_the_http_adapter(tmp_path):
 
     with MockChat(fixture_responder(FIXTURES / "honest")) as srv:
         def cli(*args, expect=0):
-            cmd = [sys.executable, "-m", "ratchet.cli", "--root", str(root),
+            cmd = [sys.executable, "-m", "shalt.cli", "--root", str(root),
                    "--backend", "grok", "--base-url", srv.base_url, *args]
             p = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=300)
             assert p.returncode == expect, p.stdout + p.stderr
@@ -195,7 +195,7 @@ def test_full_pipeline_runs_over_the_http_adapter(tmp_path):
         out = cli("build", "--max-turns", "5")
 
     assert "100.0%" in out, out
-    led = Ledger.load(root / ".ratchet" / "ledger.json")
+    led = Ledger.load(root / ".shalt" / "ledger.json")
     assert led.summary()["green"] == led.summary()["total"] > 5
     assert led.spec_lock["approved_by"] == "dan@rivlet.io"
     assert srv.calls, "the model was actually called over HTTP"
@@ -213,7 +213,7 @@ def test_full_pipeline_over_http_still_catches_an_overfitting_model(tmp_path):
 
     with MockChat(mixed) as srv:
         def cli(*args):
-            cmd = [sys.executable, "-m", "ratchet.cli", "--root", str(root),
+            cmd = [sys.executable, "-m", "shalt.cli", "--root", str(root),
                    "--backend", "grok", "--base-url", srv.base_url, *args]
             p = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=300)
             return p.stdout + p.stderr

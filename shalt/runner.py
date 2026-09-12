@@ -44,7 +44,7 @@ def run_suite(root: Path, cfg: Config | None = None) -> dict:
     except FileNotFoundError as e:
         return {"results": {}, "harness_error": True, "collection_error": "",
                 "stdout": "", "stderr": f"runner command not found: {e}. "
-                f"Check [runner].command in ratchet.toml.",
+                f"Check [runner].command in shalt.toml.",
                 "run_id": "run-failed", "duration": 0}
 
     results = read_report(report, cfg.format)

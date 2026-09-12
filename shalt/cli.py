@@ -19,7 +19,7 @@ from .roles import run_role
 from .runner import failure_digest, harness_report, run_suite
 from .spec import SpecParseError, holdout_rids, load_specs, stamp_rids
 
-LEDGER_PATH = ".ratchet/ledger.json"
+LEDGER_PATH = ".shalt/ledger.json"
 
 C = {"green": "\033[32m", "red": "\033[31m", "yellow": "\033[33m",
      "dim": "\033[2m", "bold": "\033[1m", "reset": "\033[0m"}
@@ -63,18 +63,18 @@ def cmd_init(args) -> int:
     root.mkdir(parents=True, exist_ok=True)
     preset = write_config(root, args.stack, name=args.name or root.name)
     cfg = Config.load(root)
-    for d in ("spec", "contract", ".ratchet", cfg.steps, cfg.src):
+    for d in ("spec", "contract", ".shalt", cfg.steps, cfg.src):
         (root / d).mkdir(parents=True, exist_ok=True)
     if args.stack == "python":
         (root / cfg.steps / "conftest.py").write_text(
             "import sys, pathlib\n"
             f"sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] "
             f"/ '{cfg.src}'))\n", encoding="utf-8")
-    (root / ".ratchet" / ".gitignore").write_text(
+    (root / ".shalt" / ".gitignore").write_text(
         "stage/\nbackup/\nlast_run.json\nmessages.ndjson\ncucumber.json\n",
         encoding="utf-8")
     Ledger().save(root / LEDGER_PATH)
-    print(f"initialised ratchet workspace at {root}  ({preset.label})")
+    print(f"initialised shalt workspace at {root}  ({preset.label})")
     print(f"  spec/        Gherkin + user stories, written by the author, approved by you")
     print(f"  {cfg.steps + '/':<12} step definitions, written by the stepwright only")
     print(f"  contract/    the API surface the stepwright declares it will call")
@@ -103,7 +103,7 @@ def cmd_author(args) -> int:
         print(f"  {w}")
     led, features = _sync(root)
     n = sum(len(f.scenarios) for f in features)
-    print(f"\n{n} scenario(s) drafted. Review spec/ then run: ratchet approve")
+    print(f"\n{n} scenario(s) drafted. Review spec/ then run: shalt approve")
     return 0
 
 
@@ -138,7 +138,7 @@ def cmd_approve(args) -> int:
     }
     led.save(root / LEDGER_PATH)
     print(f"\napproved by {args.by}; {len(minted)} new scenario id(s) stamped into the spec.")
-    print("next: ratchet steps")
+    print("next: shalt steps")
     return 0
 
 
@@ -146,7 +146,7 @@ def cmd_steps(args) -> int:
     root = _root(args)
     led = _ledger(root)
     if not led.spec_lock:
-        print("spec is not approved yet -- run `ratchet approve` first", file=sys.stderr)
+        print("spec is not approved yet -- run `shalt approve` first", file=sys.stderr)
         return 1
     backend = _backend(args)
     prompt = (
@@ -196,7 +196,7 @@ def cmd_build(args) -> int:
     root = _root(args)
     led, features = _sync(root)
     if not led.spec_lock:
-        print("spec is not approved yet -- run `ratchet approve` first", file=sys.stderr)
+        print("spec is not approved yet -- run `shalt approve` first", file=sys.stderr)
         return 1
     cfg = Config.load(root)
     backend = _backend(args)
@@ -294,7 +294,7 @@ def cmd_tree(args) -> int:
     led, features = _sync(root)
     tree = build_tree(list(led.entries.values()))
     if not tree:
-        print("no scenarios yet — run `ratchet author \"<what you want>\"`")
+        print("no scenarios yet — run `shalt author \"<what you want>\"`")
         return 0
     story_of = {f.file: f for f in features}
     for epic in tree:
@@ -378,7 +378,7 @@ def cmd_dashboard(args) -> int:
                           stack=PRESETS.get(cfg.stack).label if cfg.stack in PRESETS else "")
     s = led.summary()
     print(f"wrote {out.relative_to(root)}  "
-          f"({s['green']} verified / {s['total']} scenarios, {s['completion_pct']}%)")
+          f"({s['green']} upheld / {s['total']} scenarios, {s['completion_pct']}%)")
     print(_c("  one self-contained file: no network, no build step.", "dim"))
     return 0
 
@@ -498,14 +498,14 @@ def _print_status(led: Ledger, root: Path) -> None:
           f"{s[GREEN]} green / {s[RED]} red / {s[STALE]} stale / {s[PENDING]} pending")
     if s[ORPHAN]:
         print(_c(f"{s[ORPHAN]} scenario(s) removed from the spec are excluded from that "
-                 f"figure -- run `ratchet verify`", "yellow"))
+                 f"figure -- run `shalt verify`", "yellow"))
     if led.regressions:
         print(_c(f"{len(led.regressions)} regression(s) recorded in the ledger", "yellow"))
     print(_c(f"ledger: {root / LEDGER_PATH}", "dim"))
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="ratchet", description="BDD for agentic workflows")
+    p = argparse.ArgumentParser(prog="shalt", description="BDD for agentic workflows")
     p.add_argument("--root", default=".", help="workspace root")
     p.add_argument("--backend", default="fixture", choices=list(BACKENDS))
     p.add_argument("--fixtures", default=None, help="fixture directory (fixture backend)")
@@ -515,7 +515,7 @@ def main(argv: list[str] | None = None) -> int:
 
     i = sub.add_parser("init")
     i.add_argument("--stack", default="python", choices=list(PRESETS),
-                   help="toolchain preset written into ratchet.toml")
+                   help="toolchain preset written into shalt.toml")
     i.add_argument("--name", default=None)
     i.set_defaults(fn=cmd_init)
     a = sub.add_parser("author"); a.add_argument("request"); a.set_defaults(fn=cmd_author)

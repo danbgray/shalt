@@ -25,7 +25,7 @@ ALL_ZONES = ("spec", "steps", "contract", "src")
 
 # The ledger is the product. No role may write it, so it is protected on every turn regardless
 # of which zones the role owns.
-LEDGER_FILE = ".ratchet/ledger.json"
+LEDGER_FILE = ".shalt/ledger.json"
 
 # What each role is allowed to READ. Enforced by staging: the role runs in a directory that
 # physically contains only these zones, so isolation is not a matter of it choosing not to look.
@@ -163,7 +163,7 @@ def audit(root: Path, ledger, features: list) -> list[str]:
         problems.append(f"duplicate scenario id: {file} :: {name}")
     unstamped = [(f.file, s.name) for f in features for s in f.scenarios if not s.rid]
     for file, name in unstamped:
-        problems.append(f"unstamped scenario (run `ratchet approve`): {file} :: {name}")
+        problems.append(f"unstamped scenario (run `shalt approve`): {file} :: {name}")
     for e in ledger.by_status("orphan"):
         problems.append(f"orphan: ledger has '{e.name}' ({e.rid}) but the spec no longer does")
     for e in ledger.entries.values():
@@ -198,5 +198,5 @@ def audit(root: Path, ledger, features: list) -> list[str]:
             if rid not in approved:
                 problems.append(f"scenario added since approval, unapproved: {rid}")
     else:
-        problems.append("spec lock predates content hashing; re-run `ratchet approve`")
+        problems.append("spec lock predates content hashing; re-run `shalt approve`")
     return problems

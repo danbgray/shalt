@@ -1,7 +1,7 @@
 """A stepwright that wrote step definitions which do not actually assert the behaviour.
 
 Every scenario in the feature will go green against any implementation at all. This is the
-failure mode the write guard and the holdouts cannot see, and the one `ratchet mutate` exists
+failure mode the write guard and the holdouts cannot see, and the one `shalt mutate` exists
 to catch.
 """
 from pytest_bdd import given, parsers, scenarios, then, when

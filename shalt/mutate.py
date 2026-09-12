@@ -156,7 +156,7 @@ _CMP_SWAP = {ast.Eq: ast.NotEq, ast.NotEq: ast.Eq, ast.Lt: ast.GtE, ast.GtE: ast
              ast.Gt: ast.LtE, ast.LtE: ast.Gt}
 _BIN_SWAP = {ast.Add: ast.Sub, ast.Sub: ast.Add, ast.Mult: ast.Div, ast.Div: ast.Mult}
 _BOOL_SWAP = {ast.And: ast.Or, ast.Or: ast.And}
-SENTINEL = "ratchet-mutant"
+SENTINEL = "shalt-mutant"
 
 
 def _docstring_nodes(tree: ast.AST) -> set[int]:
@@ -338,7 +338,7 @@ def run_campaign(root: Path, cfg: Config | None = None, *, engine: str = "auto",
     rng.shuffle(candidates)
     candidates = candidates[:budget]
 
-    backup = Path(tempfile.mkdtemp(prefix="ratchet-mutate-"))
+    backup = Path(tempfile.mkdtemp(prefix="shalt-mutate-"))
     shutil.copytree(src_dir, backup / "src", ignore=shutil.ignore_patterns("__pycache__"))
     try:
         for i, (mutant, mutated_text) in enumerate(candidates, 1):

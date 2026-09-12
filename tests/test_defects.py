@@ -3,9 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from ratchet.integrity import audit
-from ratchet.ledger import GREEN, ORPHAN, PENDING, Ledger
-from ratchet.spec import (SpecParseError, duplicate_rids, holdout_rids, load_specs,
+from shalt.integrity import audit
+from shalt.ledger import GREEN, ORPHAN, PENDING, Ledger
+from shalt.spec import (SpecParseError, duplicate_rids, holdout_rids, load_specs,
                           stamp_rids, strip_holdouts)
 
 DOCSTRING_HOLDOUT = '''\
@@ -162,7 +162,7 @@ def test_ledger_tolerates_unknown_fields(tmp_path):
     d = _spec(tmp_path, SIMPLE)
     led = Ledger()
     led.sync_spec(load_specs(d))
-    path = tmp_path / ".ratchet" / "ledger.json"
+    path = tmp_path / ".shalt" / "ledger.json"
     led.save(path)
     import json
     raw = json.loads(path.read_text())

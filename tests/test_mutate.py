@@ -8,11 +8,11 @@ from pathlib import Path
 
 import pytest
 
-from ratchet.config import Config, write_config
-from ratchet.ledger import Ledger
-from ratchet.mutate import (Mutant, MutationReport, SENTINEL, _docstring_nodes, _py_targets,
+from shalt.config import Config, write_config
+from shalt.ledger import Ledger
+from shalt.mutate import (Mutant, MutationReport, SENTINEL, _docstring_nodes, _py_targets,
                             python_mutants, run_campaign, text_mutants)
-from ratchet.spec import load_specs
+from shalt.spec import load_specs
 
 FEATURE = '''\
 @epic:maths
@@ -70,7 +70,7 @@ def _workspace(tmp_path: Path, steps: str = STEPS_REAL, src: str = SRC) -> Path:
     root = tmp_path / "ws"
     root.mkdir(parents=True)
     write_config(root, "python")
-    for d in ("spec", "steps", "contract", "src", ".ratchet"):
+    for d in ("spec", "steps", "contract", "src", ".shalt"):
         (root / d).mkdir(parents=True, exist_ok=True)
     (root / "spec" / "maths.feature").write_text(FEATURE, encoding="utf-8")
     (root / "steps" / "conftest.py").write_text(
@@ -78,7 +78,7 @@ def _workspace(tmp_path: Path, steps: str = STEPS_REAL, src: str = SRC) -> Path:
         "sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'src'))\n")
     (root / "steps" / "test_maths.py").write_text(steps, encoding="utf-8")
     (root / "src" / "maths.py").write_text(src, encoding="utf-8")
-    Ledger().save(root / ".ratchet" / "ledger.json")
+    Ledger().save(root / ".shalt" / "ledger.json")
     return root
 
 
