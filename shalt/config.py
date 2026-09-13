@@ -95,6 +95,8 @@ class Config:
     name: str = ""
     timeout: int = 900
     env: dict[str, str] = field(default_factory=dict)
+    editor: str = ""        # which editor clickable paths open; "" = auto-detect
+    color: str = "auto"
 
     @classmethod
     def load(cls, root: Path) -> "Config":
@@ -106,6 +108,7 @@ class Config:
         raw = tomllib.loads(path.read_text(encoding="utf-8"))
         proj, runner, zones = (raw.get("project", {}), raw.get("runner", {}),
                               raw.get("zones", {}))
+        ui = raw.get("ui", {})
         cfg = cls(
             command=runner.get("command", cls.command),
             format=runner.get("format", "shalt"),
@@ -116,6 +119,8 @@ class Config:
             name=proj.get("name", ""),
             timeout=int(runner.get("timeout", 900)),
             env={str(k): str(v) for k, v in (runner.get("env") or {}).items()},
+            editor=str(ui.get("editor", "")),
+            color=str(ui.get("color", "auto")),
         )
         if cfg.format not in FORMATS:
             raise ValueError(
@@ -180,6 +185,12 @@ command = "{p.command}"
 format = "{p.format}"                 # shalt | cucumber-json | cucumber-messages
 report = "{p.report}"
 timeout = 900
-{env_block}'''
+{env_block}
+[ui]
+# Which editor a clicked path should open. One of: file, vscode, cursor, windsurf, zed,
+# subl, idea, textmate. Leave blank to auto-detect ($SHALT_EDITOR, or VS Code's terminal).
+editor = ""
+color = "auto"                        # auto | always | never (NO_COLOR always wins)
+'''
     (Path(root) / CONFIG_NAME).write_text(body, encoding="utf-8")
     return p

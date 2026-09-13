@@ -1,6 +1,6 @@
 {
   "schema": "shalt.ledger/1",
-  "generated_at": "2026-09-13T06:32:54Z",
+  "generated_at": "2026-09-13T08:56:48Z",
   "summary": {
     "green": 9,
     "red": 0,
@@ -12,7 +12,7 @@
   },
   "spec_lock": {
     "approved_by": "dan@rivlet.io",
-    "approved_at": "2026-09-13T06:32:47Z",
+    "approved_at": "2026-09-13T08:56:48Z",
     "scenario_count": 9,
     "files": {
       "currency.feature": 4,
@@ -59,6 +59,7 @@
       "name": "US dollars lead with the symbol and group thousands",
       "feature": "Currency presentation",
       "feature_file": "currency.feature",
+      "line": 9,
       "tags": [
         "@rid:S-0d41bae1",
         "@epic:billing"
@@ -88,6 +89,7 @@
       "name": "Euros use the euro sign",
       "feature": "Currency presentation",
       "feature_file": "currency.feature",
+      "line": 15,
       "tags": [
         "@rid:S-34a9baae",
         "@epic:billing"
@@ -117,6 +119,7 @@
       "name": "A month late gets a firm notice",
       "feature": "Overdue reminders",
       "feature_file": "reminders.feature",
+      "line": 21,
       "tags": [
         "@rid:S-4945816f",
         "@epic:collections"
@@ -146,6 +149,7 @@
       "name": "An invoice that is not yet overdue gets no reminder",
       "feature": "Overdue reminders",
       "feature_file": "reminders.feature",
+      "line": 9,
       "tags": [
         "@rid:S-5d7d2848",
         "@epic:collections"
@@ -175,6 +179,7 @@
       "name": "Two months late gets a final demand",
       "feature": "Overdue reminders",
       "feature_file": "reminders.feature",
+      "line": 27,
       "tags": [
         "@rid:S-5d91b792",
         "@epic:collections"
@@ -204,6 +209,7 @@
       "name": "Yen has no minor unit",
       "feature": "Currency presentation",
       "feature_file": "currency.feature",
+      "line": 21,
       "tags": [
         "@rid:S-6bc0afcf",
         "@epic:billing"
@@ -233,6 +239,7 @@
       "name": "Yen rounds to whole units rather than truncating",
       "feature": "Currency presentation",
       "feature_file": "currency.feature",
+      "line": 28,
       "tags": [
         "@rid:S-88296f2c",
         "@holdout",
@@ -263,6 +270,7 @@
       "name": "The day before escalation still gets the gentler notice",
       "feature": "Overdue reminders",
       "feature_file": "reminders.feature",
+      "line": 34,
       "tags": [
         "@rid:S-8eaaf736",
         "@holdout",
@@ -293,6 +301,7 @@
       "name": "A week late gets a gentle nudge",
       "feature": "Overdue reminders",
       "feature_file": "reminders.feature",
+      "line": 15,
       "tags": [
         "@rid:S-f0d9d285",
         "@epic:collections"

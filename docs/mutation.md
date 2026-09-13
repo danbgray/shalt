@@ -188,12 +188,19 @@ nightly job and an overnight one.
 2. **Coverage confounds strength.** A mutant on a line no scenario reaches survives because
    nothing runs it. Survivors are always reported with file and line so a human keeps that
    distinction.
-3. **It is sampled, not exhaustive.** `--budget` mutants are drawn from a seeded shuffle. A
+3. **Attribution is file-granular.** A kill proves a scenario executes the *file*, not the
+   mutated line, so blind spots over-reach in projects with few, large files. The Rust example
+   shows this plainly: `reminder_stage` and `format_amount` share one `lib.rs`, so a survivor in
+   the reminder logic is attributed to the currency scenarios too. Line-granular attribution was
+   considered and rejected — a line usually carries only one mutable token, so demanding a kill
+   on the same line would find almost nothing. Coarse and honestly labelled beats precise and
+   empty, but read the line before reading the step definitions.
+4. **It is sampled, not exhaustive.** `--budget` mutants are drawn from a seeded shuffle. A
    small budget can miss the finding entirely — the project's own demo initially ran at budget
    12, drew only crash-mutants, reported a clean 100% and proved nothing.
-4. **It is slow.** One full suite run per mutant. Budget 30 against a 14-scenario suite is about
+5. **It is slow.** One full suite run per mutant. Budget 30 against a 14-scenario suite is about
    a minute; against a real suite it is a nightly job, not a pre-commit hook.
-5. **Nothing checks the stepwright's *interface* choices** — only its assertions. A contract that
+6. **Nothing checks the stepwright's *interface* choices** — only its assertions. A contract that
    declares the wrong surface will be satisfied faithfully and wrongly.
 
 ## Ledger integration

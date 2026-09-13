@@ -33,6 +33,7 @@ class Entry:
     name: str
     feature: str
     feature_file: str
+    line: int = 0
     tags: list[str] = field(default_factory=list)
     epic: str = ""
     actor: str = ""
@@ -112,6 +113,7 @@ class Ledger:
                     st = f.story
                     e = Entry(rid=s.rid, name=s.name, feature=f.name,
                               feature_file=f.file, tags=list(s.all_tags), spec_hash=h,
+                              line=s.line,
                               epic=s.epic or f.epic, actor=st.actor,
                               capability=st.capability, benefit=st.benefit)
                     e.record("added", spec_hash=h)
@@ -119,6 +121,7 @@ class Ledger:
                     stats["added"] += 1
                     continue
                 e.name, e.feature, e.feature_file = s.name, f.name, f.file
+                e.line = s.line
                 e.tags = list(s.all_tags)
                 st = f.story
                 e.epic, e.actor = s.epic or f.epic, st.actor

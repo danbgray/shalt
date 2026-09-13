@@ -88,3 +88,18 @@ then broke mutation testing in a way that produced random scores.
     scenarios fail, so "no news" and "good news" were indistinguishable. Absence of evidence
     must never round toward a conclusion — the same rule the ledger already applies to
     `pending`, which I had failed to apply here.
+
+## 2026-09-13 — presentation code can lie too
+
+Added colour and clickable paths, and in doing so wrote two false statements into the product.
+
+19. **A "helpful" substitution can destroy the content.** Making scenario names clickable meant
+    that in terminals without OSC 8 the fallback printed an absolute path *instead of the
+    scenario name* — every row became a path. The fix was to make the fallback a choice
+    (`fallback="path"` where the path is the content, `"label"` where the label is), but the
+    lesson is that a fallback needs designing, not defaulting.
+20. **Do not let output claim more than the mechanism proves.** The blind-spot report said each
+    scenario "provably executes the line that was broken". Attribution is file-granular; it
+    proves the *file*. In a single-file Rust crate that difference is the whole finding. I only
+    noticed because the Rust output attributed a reminder-logic survivor to the currency
+    scenarios and I checked whether that could be true.

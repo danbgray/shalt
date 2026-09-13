@@ -18,15 +18,26 @@ from .ledger import GREEN, PENDING, RED, STALE, ORPHAN, Ledger
 from .roles import run_role
 from .runner import failure_digest, harness_report, run_suite
 from .spec import SpecParseError, holdout_rids, load_specs, stamp_rids
+from .term import Term, highlight_gherkin, EDITORS
 
 LEDGER_PATH = ".shalt/ledger.json"
 
-C = {"green": "\033[32m", "red": "\033[31m", "yellow": "\033[33m",
-     "dim": "\033[2m", "bold": "\033[1m", "reset": "\033[0m"}
+# legacy names kept so call sites read the same; the palette now matches the dashboard
+_NAMES = {"green": "ok", "red": "bad", "yellow": "warn", "dim": "muted",
+          "bold": "bold", "accent": "accent", "orphan": "orphan"}
+T = Term()
 
 
 def _c(s: str, k: str) -> str:
-    return f"{C[k]}{s}{C['reset']}" if sys.stdout.isatty() else s
+    return T.s(s, _NAMES.get(k, k))
+
+
+def _scenario_link(root: Path, entry, label: str) -> str:
+    """A scenario's name, clickable through to its line in the feature file."""
+    if not entry.feature_file:
+        return label
+    return T.path(root / "spec" / entry.feature_file, entry.line or None, label=label,
+                  fallback="label")
 
 
 def _root(args) -> Path:
@@ -113,12 +124,21 @@ def cmd_approve(args) -> int:
     if not features:
         print("no feature files in spec/", file=sys.stderr)
         return 1
-    print("Scenarios awaiting sign-off:\n")
-    for f in features:
-        print(_c(f"  {f.file}  ({f.name})", "bold"))
-        for s in f.scenarios:
-            mark = " [holdout]" if "@holdout" in s.tags else ""
-            print(f"    - {s.name}{mark}")
+    if args.quiet:
+        print("Scenarios awaiting sign-off:\n")
+        for f in features:
+            print(_c(f"  {f.file}  ({f.name})", "bold"))
+            for s in f.scenarios:
+                mark = " [holdout]" if "@holdout" in s.tags else ""
+                print(f"    - {s.name}{mark}")
+    else:
+        # This is the review gate, and the only one. Show the actual text being signed off.
+        for f in features:
+            path = root / "spec" / f.file
+            print("\n" + T.path(path, label=f.file, style="bold") + "  "
+                  + _c(f"({len(f.scenarios)} scenarios)", "dim"))
+            print(T.rule())
+            print(highlight_gherkin(path.read_text(encoding="utf-8"), T, number_from=1))
     if not args.yes:
         reply = input("\nApprove this spec as the contract to build against? [y/N] ").strip().lower()
         if reply != "y":
@@ -319,8 +339,10 @@ def cmd_tree(args) -> int:
                 last = ci == len(story.children) - 1
                 branch = "└──" if last else "├──"
                 tag = " [holdout]" if "@holdout" in (led.entries[sc.key].tags or []) else ""
+                entry = led.entries[sc.key]
+                name = _scenario_link(root, entry, sc.label)
                 print(f" {spipe} {branch} {_c(GLYPH[sc.status], COLOUR[sc.status])} "
-                      f"{sc.status:<8} {sc.label}{tag} {_c(sc.key, 'dim')}")
+                      f"{STATUS_LABEL[sc.status]:<9} {name}{tag} {_c(sc.key, 'dim')}")
     _print_status(led, root)
     return 0
 
@@ -364,7 +386,7 @@ def cmd_diagrams(args) -> int:
     written = write_mermaid(root, entries)
     print(f"wrote {len(written)} file(s):")
     for w in written:
-        print(f"  {w.relative_to(root)}")
+        print("  " + T.path(w, label=str(w.relative_to(root))))
     print(_c("\n  .mmd renders in GitHub, pull requests and most editors; the .md wrappers "
              "render inline.", "dim"))
     return 0
@@ -377,8 +399,8 @@ def cmd_dashboard(args) -> int:
     out = write_dashboard(root, led, project=cfg.name or root.name,
                           stack=PRESETS.get(cfg.stack).label if cfg.stack in PRESETS else "")
     s = led.summary()
-    print(f"wrote {out.relative_to(root)}  "
-          f"({s['green']} upheld / {s['total']} scenarios, {s['completion_pct']}%)")
+    print("wrote " + T.path(out, label=str(out.relative_to(root)))
+          + f"  ({s['green']} upheld / {s['total']} scenarios, {s['completion_pct']}%)")
     print(_c("  one self-contained file: no network, no build step.", "dim"))
     return 0
 
@@ -422,7 +444,9 @@ def cmd_mutate(args) -> int:
         print(_c(f"\n{len(report.survived)} mutation(s) survived — no scenario noticed:",
                  "yellow"))
         for m in report.survived[:15]:
-            print(f"  {m.describe()}")
+            print("  " + T.path(root / m.path, m.line,
+                                label=f"{m.path}:{m.line}", style="warn")
+                  + f"  {m.operator}  {m.before} -> {m.after}")
         if len(report.survived) > 15:
             print(_c(f"  ... and {len(report.survived) - 15} more", "dim"))
         print(_c("  Each is a question, not a proven defect: a survivor can mean a weak "
@@ -440,15 +464,20 @@ def cmd_mutate(args) -> int:
         print(_c(f"\nBLIND SPOTS — {len(by_mutant)} mutation(s) ran inside scenarios that "
                  f"stayed green:", "red"))
         for desc, rids in sorted(by_mutant.items(), key=lambda kv: -len(kv[1])):
-            print(f"  {desc}")
+            mu = next(m for ms in blind.values() for m in ms if m.describe() == desc)
+            print("  " + T.path(root / mu.path, mu.line,
+                                label=f"{mu.path}:{mu.line}", style="bad")
+                  + f"  {mu.operator}  {mu.before} -> {mu.after}")
             for rid in sorted(rids)[:6]:
                 e = led.entries.get(rid)
                 print(_c(f"      missed by  {e.name if e else rid}", "dim"))
             if len(rids) > 6:
                 print(_c(f"      ... and {len(rids) - 6} more", "dim"))
-        print(_c("\n  Each of these scenarios provably executes the line that was broken and "
-                 "stayed green.\n  That is one of two defects, and they need different "
-                 "fixes:\n"
+        print(_c("\n  Each of these scenarios provably executes the FILE that was broken and "
+                 "stayed green.\n  Attribution is file-granular, so in a single-file project "
+                 "this over-reaches: a\n  scenario may run the file without ever reaching the "
+                 "mutated line. Read the line first.\n"
+                 "  When it does hold, it is one of two defects, needing different fixes:\n"
                  "    - the assertion does not check the value  -> the step definitions are "
                  "weak\n"
                  "    - no scenario exercises the case the mutation changes  -> the spec is "
@@ -475,6 +504,53 @@ def cmd_mutate(args) -> int:
     return 1 if report.weak_oracles else 0
 
 
+def cmd_show(args) -> int:
+    """Print the spec with Gherkin highlighting -- all of it, one feature, or one scenario."""
+    root = _root(args)
+    features = load_specs(root / "spec")
+    if not features:
+        print("no feature files in spec/", file=sys.stderr)
+        return 1
+
+    target = (args.target or "").strip()
+    wanted, mark_rid = features, None
+    if target:
+        by_rid = {s.rid: (f, s) for f in features for s in f.scenarios if s.rid}
+        if target in by_rid:
+            f, sc = by_rid[target]
+            wanted, mark_rid = [f], sc
+        else:
+            hit = [f for f in features if target in f.file or target.lower() in f.name.lower()]
+            if not hit:
+                print(f"no scenario id or feature matching {target!r}", file=sys.stderr)
+                print(_c("  try `shalt status` for the ids", "dim"), file=sys.stderr)
+                return 1
+            wanted = hit
+
+    led = _ledger(root)
+    for f in wanted:
+        path = root / "spec" / f.file
+        text = path.read_text(encoding="utf-8")
+        marks: set[int] = set()
+        if mark_rid is not None:
+            end = mark_rid.line + 1 + len(mark_rid.steps) + len(mark_rid.examples)
+            marks = set(range(mark_rid.block_start, end))
+        print("\n" + T.path(path, label=f.file, style="bold")
+              + _c(f"  {len(f.scenarios)} scenarios", "dim"))
+        print(T.rule())
+        print(highlight_gherkin(text, T, number_from=1, marks=marks))
+        if args.status:
+            print()
+            for sc in f.scenarios:
+                e = led.entries.get(sc.rid)
+                if not e:
+                    continue
+                print(f"  {_c(GLYPH[e.status], COLOUR[e.status])} "
+                      f"{STATUS_LABEL[e.status]:<9} {_scenario_link(root, e, e.name)}  "
+                      f"{_c(e.rid, 'dim')}")
+    return 0
+
+
 def _print_status(led: Ledger, root: Path) -> None:
     s = led.summary()
     print()
@@ -489,19 +565,24 @@ def _print_status(led: Ledger, root: Path) -> None:
             glyph = {"green": "+", "red": "x", "stale": "~",
                      "pending": ".", "orphan": "?"}[e.status]
             tag = " [holdout]" if "@holdout" in e.tags else ""
-            print(f"  {_c(glyph, colour)} {e.status:<8} {e.name}{tag}  {_c(e.rid, 'dim')}")
+            name = _scenario_link(root, e, e.name)
+            print(f"  {_c(glyph, colour)} {STATUS_LABEL[e.status]:<9} {name}{tag}  "
+                  f"{_c(e.rid, 'dim')}")
     live = s["total"] - s[ORPHAN]
     bar_w = 28
     filled = int(bar_w * s[GREEN] / live) if live else 0
     bar = _c("#" * filled, "green") + _c("-" * (bar_w - filled), "dim")
     print(f"\n[{bar}] {s['completion_pct']}%  "
-          f"{s[GREEN]} green / {s[RED]} red / {s[STALE]} stale / {s[PENDING]} pending")
+          f"{_c(str(s[GREEN]) + ' upheld', 'green')} / "
+          f"{_c(str(s[RED]) + ' failing', 'red' if s[RED] else 'dim')} / "
+          f"{_c(str(s[STALE]) + ' stale', 'yellow' if s[STALE] else 'dim')} / "
+          f"{_c(str(s[PENDING]) + ' no test', 'dim')}")
     if s[ORPHAN]:
         print(_c(f"{s[ORPHAN]} scenario(s) removed from the spec are excluded from that "
                  f"figure -- run `shalt verify`", "yellow"))
     if led.regressions:
         print(_c(f"{len(led.regressions)} regression(s) recorded in the ledger", "yellow"))
-    print(_c(f"ledger: {root / LEDGER_PATH}", "dim"))
+    print(_c("ledger: ", "dim") + T.path(root / LEDGER_PATH, style="muted"))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -511,6 +592,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--fixtures", default=None, help="fixture directory (fixture backend)")
     p.add_argument("--model", default=None, help="override the backend's default model")
     p.add_argument("--base-url", default=None, help="override the API base url")
+    p.add_argument("--color", default="auto", choices=["auto", "always", "never"],
+                   help="colour output (NO_COLOR is always honoured)")
+    p.add_argument("--editor", default=None, choices=sorted(EDITORS),
+                   help="which editor clickable paths should open (default: $SHALT_EDITOR)")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     i = sub.add_parser("init")
@@ -521,6 +606,8 @@ def main(argv: list[str] | None = None) -> int:
     a = sub.add_parser("author"); a.add_argument("request"); a.set_defaults(fn=cmd_author)
     ap = sub.add_parser("approve")
     ap.add_argument("--yes", action="store_true"); ap.add_argument("--by", default="unknown")
+    ap.add_argument("--quiet", action="store_true",
+                    help="list scenario names instead of printing the spec")
     ap.set_defaults(fn=cmd_approve)
     sub.add_parser("steps").set_defaults(fn=cmd_steps)
     b = sub.add_parser("build")
@@ -537,6 +624,11 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--diagram", choices=["use-cases", "breakdown", "pipeline"], default=None)
     d.set_defaults(fn=cmd_diagrams)
     sub.add_parser("dashboard").set_defaults(fn=cmd_dashboard)
+    sh = sub.add_parser("show")
+    sh.add_argument("target", nargs="?", default=None,
+                    help="a scenario id, a feature file, or nothing for the whole spec")
+    sh.add_argument("--status", action="store_true", help="list each scenario's status after")
+    sh.set_defaults(fn=cmd_show)
     m = sub.add_parser("mutate")
     m.add_argument("--engine", default="auto", choices=["auto"] + list(ENGINES),
                    help="auto picks the Python AST engine for a Python stack, else text")
@@ -546,6 +638,15 @@ def main(argv: list[str] | None = None) -> int:
     m.set_defaults(fn=cmd_mutate)
 
     args = p.parse_args(argv)
+    global T
+    # the workspace may express a preference; an explicit flag always wins
+    try:
+        wcfg = Config.load(Path(args.root))
+    except Exception:
+        wcfg = None
+    mode = args.color if args.color != "auto" else (wcfg.color if wcfg else "auto")
+    editor = args.editor or (wcfg.editor if wcfg and wcfg.editor else None)
+    T = Term(mode=mode, editor=editor)
     try:
         return args.fn(args)
     except (RuntimeError, ValueError) as e:
