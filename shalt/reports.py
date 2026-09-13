@@ -21,9 +21,21 @@ PASSING = {"passed"}
 
 
 def _rid_from_tags(tags: list) -> str | None:
+    """Find the scenario id among a report's tags.
+
+    The leading "@" is normalised because Cucumber implementations genuinely disagree about
+    whether a tag name carries it. cucumber-jvm and cucumber-js keep it; cucumber-rs strips it,
+    emitting `{"name": "rid:S-0d41bae1"}`. The JSON format does not settle the question, so a
+    parser that insists on one spelling silently binds nothing against half the ecosystem --
+    every scenario then reads `pending`, which looks like unfinished work rather than a bug.
+    """
     for t in tags or []:
-        name = t.get("name", "") if isinstance(t, dict) else str(t)
-        if (m := RID_RE.fullmatch(name.strip())):
+        name = (t.get("name", "") if isinstance(t, dict) else str(t)).strip()
+        if not name:
+            continue
+        if not name.startswith("@"):
+            name = "@" + name
+        if (m := RID_RE.fullmatch(name)):
             return m.group(1)
     return None
 

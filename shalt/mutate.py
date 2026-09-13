@@ -26,10 +26,12 @@ Two honest limitations, stated here because they bound what a score means:
 from __future__ import annotations
 
 import ast
+import os
 import random
 import re
 import shutil
 import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -347,12 +349,14 @@ def run_campaign(root: Path, cfg: Config | None = None, *, engine: str = "auto",
             try:
                 target.write_text(mutated_text, encoding="utf-8")
                 run = run_suite(root, cfg)
-                if run.get("harness_error") or run.get("collection_error"):
-                    # the mutant did not compile or the suite could not run: it proves
-                    # nothing about the assertions, so it is excluded rather than counted
+                results = run.get("results", {})
+                if run.get("harness_error") or run.get("collection_error") \
+                        or not any(rid in results for rid in report.baseline_green):
+                    # the mutant did not compile, the suite could not run, or the run reported
+                    # nothing about any scenario we are measuring. Silence is not evidence of
+                    # survival, so the mutant is excluded rather than counted as one.
                     mutant.status = "invalid"
                 else:
-                    results = run.get("results", {})
                     killers = [rid for rid in report.baseline_green
                                if results.get(rid, {}).get("outcome") == "failed"]
                     mutant.killed_by = killers
@@ -368,5 +372,38 @@ def run_campaign(root: Path, cfg: Config | None = None, *, engine: str = "auto",
         if src_dir.exists():
             shutil.rmtree(src_dir)
         shutil.copytree(backup / "src", src_dir)
+        _touch_tree(src_dir)
         shutil.rmtree(backup, ignore_errors=True)
+
+    # The campaign is only meaningful if the tree it leaves behind still reproduces the
+    # baseline. If it does not, every result above was measured against something other than
+    # the code under test, so say so rather than reporting a number.
+    after = run_suite(root, cfg)
+    still_green = sorted(rid for rid, r in after.get("results", {}).items()
+                         if r["outcome"] == "passed")
+    if still_green != report.baseline_green:
+        lost = set(report.baseline_green) - set(still_green)
+        gained = set(still_green) - set(report.baseline_green)
+        drift = (f"{len(lost)} scenario(s) no longer pass" if lost else "") + \
+                (" and " if lost and gained else "") + \
+                (f"{len(gained)} now pass that did not at the baseline" if gained else "")
+        report.error = (
+            f"the workspace did not return to its baseline after mutating, so these results "
+            f"cannot be trusted ({drift}). This usually means the build system did not rebuild "
+            f"from the restored sources -- or that the baseline itself was measured against a "
+            f"stale binary.")
     return report
+
+
+def _touch_tree(path: Path) -> None:
+    """Stamp every restored file as modified now.
+
+    shutil.copytree preserves mtimes, which is exactly wrong here: a restored source then looks
+    OLDER than artifacts compiled from a mutant, so cargo, go build, javac and friends skip the
+    rebuild and the next run silently executes mutated code. That corrupts the *baseline*, and a
+    corrupted baseline turns real kills into phantom survivors.
+    """
+    now = time.time()
+    for p in path.rglob("*"):
+        if p.is_file():
+            os.utime(p, (now, now))

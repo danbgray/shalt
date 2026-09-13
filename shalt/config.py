@@ -69,6 +69,13 @@ PRESETS: dict[str, Preset] = {
         "bundle exec cucumber {spec} -r {steps} --format json --out {report}",
         "cucumber-json", ".shalt/cucumber.json",
         src="lib", steps="features/step_definitions"),
+    "rust": Preset(
+        "Rust / cucumber-rs",
+        "cargo test --test cucumber",
+        "cucumber-json", ".shalt/cucumber.json",
+        src="src", steps="tests",
+        note=("Zones match Cargo's own layout. The report path reaches the test binary "
+              "through [runner].env, because cargo has no flag for it.")),
     "dotnet": Preset(
         ".NET / Reqnroll",
         "dotnet test -- Reqnroll.Output.Cucumber={report}",
@@ -116,13 +123,26 @@ class Config:
                 f"expected one of {', '.join(FORMATS)}")
         return cfg
 
+    def placeholders(self, root: Path) -> dict[str, str]:
+        return {
+            "spec": str(Path(root) / "spec"), "steps": str(Path(root) / self.steps),
+            "src": str(Path(root) / self.src), "report": str(Path(root) / self.report),
+            "root": str(root),
+        }
+
+    def resolved_env(self, root: Path) -> dict[str, str]:
+        """Environment values take the same placeholders as the command.
+
+        Some runners have no flag for the report path -- `cargo test` is the obvious one -- so
+        an environment variable is the only channel. Without substitution here the path would
+        have to be hardcoded identically in two places, which is a drift waiting to happen.
+        """
+        ph = self.placeholders(root)
+        return {k: v.format(**ph) for k, v in self.env.items()}
+
     def argv(self, root: Path) -> list[str]:
         """The runner command with {spec} {steps} {src} {report} {root} substituted."""
-        filled = self.command.format(
-            spec=str(Path(root) / "spec"), steps=str(Path(root) / self.steps),
-            src=str(Path(root) / self.src), report=str(Path(root) / self.report),
-            root=str(root))
-        return shlex.split(filled)
+        return shlex.split(self.command.format(**self.placeholders(root)))
 
     @property
     def uses_shell(self) -> bool:
@@ -134,6 +154,9 @@ def write_config(root: Path, stack: str, name: str = "") -> Preset:
     if stack not in PRESETS:
         raise ValueError(f"unknown stack {stack!r}; expected one of {', '.join(PRESETS)}")
     p = PRESETS[stack]
+    env_block = ('\n[runner.env]\n'
+                 'SHALT_REPORT = "{report}"   # the test binary reads this to know where to write\n'
+                 ) if stack == "rust" else ""
     body = f'''# shalt workspace configuration
 #
 # shalt is language-agnostic: the zone model, the ledger, scenario identity and the write
@@ -157,6 +180,6 @@ command = "{p.command}"
 format = "{p.format}"                 # shalt | cucumber-json | cucumber-messages
 report = "{p.report}"
 timeout = 900
-'''
+{env_block}'''
     (Path(root) / CONFIG_NAME).write_text(body, encoding="utf-8")
     return p

@@ -148,6 +148,38 @@ A mutation that breaks the suite itself — a syntax error, an import failure �
 `invalid` and **excluded from the score entirely**, neither killed nor survived. It proves
 nothing about the assertions, and counting it either way would distort the number.
 
+## Compiled languages: the stale-binary hazard
+
+Mutating an interpreted language is straightforward — the next run reads the file. For anything
+that compiles, the build system sits between the mutation and the test, and it can silently
+decline to notice.
+
+The campaign restores `src/` at the end with `shutil.copytree`, which **preserves mtimes**. A
+restored source then looks *older* than artifacts compiled from a mutant, so cargo, `go build`,
+`javac` and the rest skip the rebuild. The next campaign's **baseline** therefore runs a binary
+built from the previous campaign's last mutant: scenarios fail at baseline that should pass, they
+drop out of `baseline_green`, and mutants affecting them can no longer be killed — so they are
+reported as survivors.
+
+Found by running shalt against a real Rust project, where identical input produced **100%, then
+25%, then 25%**.
+
+Three defences, because the first one alone is a fix and the other two are how you find out it
+stopped working:
+
+1. **`_touch_tree`** stamps every restored file as modified now, so any mtime-based build system
+   rebuilds.
+2. **The campaign re-runs the baseline afterwards.** If the restored workspace no longer
+   reproduces it, the report carries an error instead of a score. A number measured against the
+   wrong binary is worse than no number.
+3. **A run that reports nothing about any measured scenario is `invalid`, not `survived`.**
+   Silence is not evidence of survival — and cucumber-rs exits `0` even when scenarios fail, so
+   a missing report can otherwise look like a clean pass.
+
+A practical consequence: mutation testing a compiled project costs a full rebuild per mutant.
+On the small Rust example that is about 0.7s; on a real codebase it is the difference between a
+nightly job and an overnight one.
+
 ## Limitations, which bound what a score means
 
 1. **Equivalent mutants.** Some mutations do not change behaviour at all: an unreachable branch,

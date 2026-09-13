@@ -244,3 +244,52 @@ def test_an_unknown_engine_is_rejected(tmp_path):
     root = _workspace(tmp_path)
     with pytest.raises(ValueError, match="unknown mutation engine"):
         run_campaign(root, Config.load(root), engine="quantum")
+
+
+# --------------------------------------------------- restoring a compiled-language workspace
+def test_touch_tree_stamps_every_restored_file_as_modified_now(tmp_path):
+    import shutil
+    import time
+
+    from shalt.mutate import _touch_tree
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "lib.rs").write_text("fn main() {}\n")
+    (src / "nested").mkdir()
+    (src / "nested" / "mod.rs").write_text("pub fn f() {}\n")
+
+    old = time.time() - 10_000
+    for p in src.rglob("*"):
+        if p.is_file():
+            import os
+            os.utime(p, (old, old))
+
+    backup = tmp_path / "backup"
+    shutil.copytree(src, backup)
+    shutil.rmtree(src)
+    shutil.copytree(backup, src)
+
+    stale = [p for p in src.rglob("*") if p.is_file() and p.stat().st_mtime < time.time() - 100]
+    assert stale, "copytree is expected to preserve the old mtimes — that is the hazard"
+
+    _touch_tree(src)
+    stale = [p for p in src.rglob("*") if p.is_file() and p.stat().st_mtime < time.time() - 100]
+    assert not stale, "every restored file must look modified now, or builds will not rebuild"
+
+
+def test_a_run_that_reports_nothing_is_invalid_not_survived():
+    """Silence is not evidence of survival.
+
+    cucumber-rs exits 0 even when scenarios fail, so a run that produced no report at all can
+    look like a clean pass. Classified as 'survived' it would manufacture phantom findings.
+    """
+    from shalt.mutate import Mutant, MutationReport
+
+    r = MutationReport(baseline_green=["S-1", "S-2"])
+    r.mutants.append(Mutant(path="src/a.rs", line=1, operator="comparison",
+                            before=">=", after="<", status="invalid"))
+    assert r.survived == []
+    assert r.score == 0.0
+    assert r.weak_oracles == {"S-1": "detected no mutation at all",
+                              "S-2": "detected no mutation at all"}

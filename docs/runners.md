@@ -21,6 +21,18 @@ graph LR
   style ledger fill:#1f7a4c,stroke:#155a38,color:#ffffff
 ```
 
+**Tag spelling is not portable, and the format does not settle it.** cucumber-rs emits
+`{"name": "rid:S-0d41bae1"}` — with **no leading `@`** — while cucumber-jvm and cucumber-js keep
+it. `reports._rid_from_tags` therefore normalises the tag before matching.
+
+This is worth dwelling on because of how it failed. shalt's parser originally matched only
+`@rid:`, so against a real Rust project it bound *nothing*: every scenario reported `pending`,
+which reads as ordinary unfinished work rather than a bug. There was no error, no warning, and
+the synthetic test payload — written by the same person as the parser — had the `@`. Only a real
+runner could have found it. Regression test:
+`test_a_tag_without_the_leading_at_sign_still_binds`, using output captured verbatim from
+cucumber-rs.
+
 An earlier version keyed on `(feature file basename, scenario name)`. That collided whenever two
 features in different directories shared a basename and a scenario name — one rid received both
 outcomes, the other was permanently `pending` despite having a passing test. Binding by tag
@@ -61,6 +73,20 @@ A command containing `|`, `>` or `&&` is run through a shell (`Config.uses_shell
 is `shlex.split` and executed directly. `PYTHONPATH` is extended with the workspace root and the
 src zone, and `[runner].env` entries are merged into the environment.
 
+### `[runner].env`
+
+Values here take the **same placeholders as the command**. Some runners have no flag for the
+report path — `cargo test` is the obvious one — so an environment variable is the only channel:
+
+```toml
+[runner.env]
+SHALT_REPORT = "{report}"
+```
+
+Without substitution the path would have to be hardcoded identically in `shalt.toml` and in the
+test binary. Two places that must agree, with nothing forcing them to, is a drift waiting to
+happen.
+
 ### `[runner].format`
 
 | format | produced by | parser |
@@ -85,6 +111,10 @@ guarantees** — each needs its own toolchain present, and the command will usua
 | `java` | `mvn test -Dcucumber.plugin=json:{report}` | `cucumber-json` | `src/test/java`, `src/main/java` |
 | `ruby` | `bundle exec cucumber --format json --out {report}` | `cucumber-json` | `features/step_definitions`, `lib/` |
 | `dotnet` | `dotnet test` + Reqnroll Cucumber output | `cucumber-json` | `Tests/`, `src/` |
+| `rust` | `cargo test --test cucumber` + cucumber-rs `writer::Json` | `cucumber-json` | `tests/`, `src/` |
+
+The Rust preset is the one exercised against a real toolchain — see
+`examples/rust-billing/`. Its zones map onto Cargo's own layout, so nothing needs rearranging.
 
 Every preset is asserted to load and to substitute all placeholders.
 → `test_every_preset_writes_a_loadable_config`, `test_config_substitutes_workspace_paths`

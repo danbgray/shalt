@@ -21,6 +21,11 @@ obligations are upheld and against exactly what wording.
 
 Generated diagrams live in [diagrams/](diagrams/) and are produced by `shalt diagrams`.
 
+Two worked examples: [`examples/invoice`](../examples/invoice) runs the whole agent loop offline
+with no API key or toolchain, and [`examples/rust-billing`](../examples/rust-billing) is a real
+Cargo project driven through cucumber-rs — the test that proved the language-agnosticism claim,
+and found two bugs doing it.
+
 ## One-paragraph summary for the impatient
 
 Four zones (`spec/`, `steps/`, `contract/`, `src/`), each writable by exactly one agent role.

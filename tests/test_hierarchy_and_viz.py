@@ -210,7 +210,22 @@ def test_every_preset_writes_a_loadable_config(tmp_path):
         cfg = Config.load(root)
         assert cfg.stack == stack
         assert cfg.format in ("shalt", "cucumber-json", "cucumber-messages")
-        assert "{report}" in cfg.command or "{spec}" in cfg.command
+        # the runner has to be able to find out where to write its report. Most take it on the
+        # command line; cargo has no such flag, so the rust preset passes it through the
+        # environment instead. Either channel is fine; neither is not.
+        reachable = "{report}" in cfg.command or any(
+            "{report}" in v for v in cfg.env.values())
+        assert reachable, f"{stack}: nothing tells the runner where to write its report"
+
+
+def test_env_values_take_the_same_placeholders_as_the_command(tmp_path):
+    """Without this the report path would have to be hardcoded identically in shalt.toml and in
+    the test binary — two places that will drift."""
+    write_config(tmp_path, "rust")
+    cfg = Config.load(tmp_path)
+    env = cfg.resolved_env(tmp_path)
+    assert env["SHALT_REPORT"] == str(tmp_path / cfg.report)
+    assert "{" not in env["SHALT_REPORT"]
 
 
 def test_config_substitutes_workspace_paths(tmp_path):
@@ -320,3 +335,70 @@ def test_terse_failure_extracts_the_assertion_not_the_plumbing():
 
 def test_terse_failure_falls_back_for_other_runners():
     assert "boom" in terse_failure("some runner\nsaid boom")
+
+
+# ----------------------------------- real runner output, not a payload we wrote ourselves
+# Captured verbatim from cucumber-rs 0.23 (`writer::Json`). The point of keeping it real is the
+# tag spelling: cucumber-rs emits "rid:S-..." with NO leading "@", while cucumber-jvm and
+# cucumber-js keep it. The JSON format does not settle the question. A parser that insists on
+# one spelling binds nothing against half the ecosystem, and every scenario then reads
+# "pending" — which looks like unfinished work rather than a bug. Found by running shalt
+# against a real Rust project.
+CUCUMBER_RS_REPORT = """[{
+  "uri": "spec/reminders.feature",
+  "keyword": "Feature",
+  "name": "Overdue reminders",
+  "tags": [{"name": "epic:collections", "line": 2}],
+  "elements": [
+    {
+      "id": "overdue-reminders/an-invoice-that-is-not-yet-overdue-gets-no-reminder",
+      "keyword": "Scenario", "line": 9, "type": "scenario",
+      "name": "An invoice that is not yet overdue gets no reminder",
+      "tags": [{"name": "rid:S-5d7d2848", "line": 9}],
+      "steps": [
+        {"keyword": "Given ", "name": "an invoice 0 days overdue",
+         "result": {"status": "passed"}},
+        {"keyword": "When ", "name": "I ask which reminder is due",
+         "result": {"status": "passed"}},
+        {"keyword": "Then ", "name": "the reminder is \\"none\\"",
+         "result": {"status": "passed"}}
+      ]
+    },
+    {
+      "id": "overdue-reminders/two-months-late-gets-a-final-demand",
+      "keyword": "Scenario", "line": 25, "type": "scenario",
+      "name": "Two months late gets a final demand",
+      "tags": [{"name": "rid:S-5d91b792", "line": 25}],
+      "steps": [
+        {"keyword": "Given ", "name": "an invoice 60 days overdue",
+         "result": {"status": "passed"}},
+        {"keyword": "When ", "name": "I ask which reminder is due",
+         "result": {"status": "passed"}},
+        {"keyword": "Then ", "name": "the reminder is \\"final\\"",
+         "result": {"status": "failed", "error_message": "wrong reminder stage"}}
+      ]
+    }
+  ]
+}]"""
+
+
+def test_a_tag_without_the_leading_at_sign_still_binds():
+    r = parse_cucumber_json(CUCUMBER_RS_REPORT)
+    assert set(r) == {"S-5d7d2848", "S-5d91b792"}, \
+        "cucumber-rs strips the @ from tag names; binding must not depend on that spelling"
+    assert r["S-5d7d2848"]["outcome"] == "passed"
+    assert r["S-5d91b792"]["outcome"] == "failed"
+    assert "wrong reminder stage" in r["S-5d91b792"]["detail"]
+
+
+@pytest.mark.parametrize("tag,expected", [
+    ({"name": "rid:S-0d41bae1"}, "S-0d41bae1"),       # cucumber-rs
+    ({"name": "@rid:S-0d41bae1"}, "S-0d41bae1"),      # cucumber-jvm, cucumber-js
+    ({"name": " @rid:S-0d41bae1 "}, "S-0d41bae1"),    # padded
+    ("rid:S-0d41bae1", "S-0d41bae1"),                 # bare string, not an object
+    ({"name": "epic:billing"}, None),
+    ({"name": ""}, None),
+])
+def test_rid_extraction_tolerates_every_spelling_in_the_wild(tag, expected):
+    from shalt.reports import _rid_from_tags
+    assert _rid_from_tags([tag]) == expected

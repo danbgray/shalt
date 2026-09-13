@@ -1,0 +1,321 @@
+{
+  "schema": "shalt.ledger/1",
+  "generated_at": "2026-09-13T06:32:54Z",
+  "summary": {
+    "green": 9,
+    "red": 0,
+    "pending": 0,
+    "stale": 0,
+    "orphan": 0,
+    "total": 9,
+    "completion_pct": 100.0
+  },
+  "spec_lock": {
+    "approved_by": "dan@rivlet.io",
+    "approved_at": "2026-09-13T06:32:47Z",
+    "scenario_count": 9,
+    "files": {
+      "currency.feature": 4,
+      "reminders.feature": 5
+    },
+    "scenario_hashes": {
+      "S-0d41bae1": "sha256:2b022c3f676a8c3d0953de5e4b2678a1",
+      "S-34a9baae": "sha256:6efa13a267d4260931eb71cbd3c3f4a7",
+      "S-6bc0afcf": "sha256:291eb8842e3ebc8e6ca8f8dc119bdca4",
+      "S-88296f2c": "sha256:a277cf4dcae20901347f6d644ec347b3",
+      "S-5d7d2848": "sha256:f62b5915f8fa948103efb4c0c9fa923a",
+      "S-f0d9d285": "sha256:ba7ef3855fe0c98a6a5dd398f217186a",
+      "S-4945816f": "sha256:7dd59c375f0cf1cb49a9489aedde0c70",
+      "S-5d91b792": "sha256:210fdca591e0fa41150a14f4862f8609",
+      "S-8eaaf736": "sha256:a346bba56dbe329e8fc0b30d3c4b64a6"
+    }
+  },
+  "regressions": [],
+  "mutation": {
+    "score": 100.0,
+    "killed": 8,
+    "survived": 0,
+    "invalid": 0,
+    "baseline_green": 9,
+    "kills": {
+      "S-0d41bae1": 4,
+      "S-34a9baae": 4,
+      "S-6bc0afcf": 5,
+      "S-88296f2c": 5,
+      "S-4945816f": 2,
+      "S-5d7d2848": 3,
+      "S-8eaaf736": 3,
+      "S-f0d9d285": 3,
+      "S-5d91b792": 1
+    },
+    "vacuous": [],
+    "weak_oracles": {},
+    "blind_spots": {},
+    "survivors": []
+  },
+  "scenarios": {
+    "S-0d41bae1": {
+      "rid": "S-0d41bae1",
+      "name": "US dollars lead with the symbol and group thousands",
+      "feature": "Currency presentation",
+      "feature_file": "currency.feature",
+      "tags": [
+        "@rid:S-0d41bae1",
+        "@epic:billing"
+      ],
+      "epic": "billing",
+      "actor": "billing clerk",
+      "capability": "amounts shown in the customer's own currency",
+      "benefit": "an invoice is never misread as the wrong figure",
+      "status": "green",
+      "spec_hash": "sha256:2b022c3f676a8c3d0953de5e4b2678a1",
+      "verified_spec_hash": "sha256:2b022c3f676a8c3d0953de5e4b2678a1",
+      "last_green_at": "2026-09-13T06:32:48Z",
+      "last_run_at": "2026-09-13T06:32:48Z",
+      "failure": null,
+      "mutants_killed": 4,
+      "blind_spots": 0,
+      "history": [
+        {
+          "at": "2026-09-13T06:32:47Z",
+          "event": "added",
+          "spec_hash": "sha256:2b022c3f676a8c3d0953de5e4b2678a1"
+        }
+      ]
+    },
+    "S-34a9baae": {
+      "rid": "S-34a9baae",
+      "name": "Euros use the euro sign",
+      "feature": "Currency presentation",
+      "feature_file": "currency.feature",
+      "tags": [
+        "@rid:S-34a9baae",
+        "@epic:billing"
+      ],
+      "epic": "billing",
+      "actor": "billing clerk",
+      "capability": "amounts shown in the customer's own currency",
+      "benefit": "an invoice is never misread as the wrong figure",
+      "status": "green",
+      "spec_hash": "sha256:6efa13a267d4260931eb71cbd3c3f4a7",
+      "verified_spec_hash": "sha256:6efa13a267d4260931eb71cbd3c3f4a7",
+      "last_green_at": "2026-09-13T06:32:48Z",
+      "last_run_at": "2026-09-13T06:32:48Z",
+      "failure": null,
+      "mutants_killed": 4,
+      "blind_spots": 0,
+      "history": [
+        {
+          "at": "2026-09-13T06:32:47Z",
+          "event": "added",
+          "spec_hash": "sha256:6efa13a267d4260931eb71cbd3c3f4a7"
+        }
+      ]
+    },
+    "S-4945816f": {
+      "rid": "S-4945816f",
+      "name": "A month late gets a firm notice",
+      "feature": "Overdue reminders",
+      "feature_file": "reminders.feature",
+      "tags": [
+        "@rid:S-4945816f",
+        "@epic:collections"
+      ],
+      "epic": "collections",
+      "actor": "credit controller",
+      "capability": "reminders to escalate as an invoice ages",
+      "benefit": "we chase a debt while it is still collectable",
+      "status": "green",
+      "spec_hash": "sha256:7dd59c375f0cf1cb49a9489aedde0c70",
+      "verified_spec_hash": "sha256:7dd59c375f0cf1cb49a9489aedde0c70",
+      "last_green_at": "2026-09-13T06:32:48Z",
+      "last_run_at": "2026-09-13T06:32:48Z",
+      "failure": null,
+      "mutants_killed": 2,
+      "blind_spots": 0,
+      "history": [
+        {
+          "at": "2026-09-13T06:32:47Z",
+          "event": "added",
+          "spec_hash": "sha256:7dd59c375f0cf1cb49a9489aedde0c70"
+        }
+      ]
+    },
+    "S-5d7d2848": {
+      "rid": "S-5d7d2848",
+      "name": "An invoice that is not yet overdue gets no reminder",
+      "feature": "Overdue reminders",
+      "feature_file": "reminders.feature",
+      "tags": [
+        "@rid:S-5d7d2848",
+        "@epic:collections"
+      ],
+      "epic": "collections",
+      "actor": "credit controller",
+      "capability": "reminders to escalate as an invoice ages",
+      "benefit": "we chase a debt while it is still collectable",
+      "status": "green",
+      "spec_hash": "sha256:f62b5915f8fa948103efb4c0c9fa923a",
+      "verified_spec_hash": "sha256:f62b5915f8fa948103efb4c0c9fa923a",
+      "last_green_at": "2026-09-13T06:32:48Z",
+      "last_run_at": "2026-09-13T06:32:48Z",
+      "failure": null,
+      "mutants_killed": 3,
+      "blind_spots": 0,
+      "history": [
+        {
+          "at": "2026-09-13T06:32:47Z",
+          "event": "added",
+          "spec_hash": "sha256:f62b5915f8fa948103efb4c0c9fa923a"
+        }
+      ]
+    },
+    "S-5d91b792": {
+      "rid": "S-5d91b792",
+      "name": "Two months late gets a final demand",
+      "feature": "Overdue reminders",
+      "feature_file": "reminders.feature",
+      "tags": [
+        "@rid:S-5d91b792",
+        "@epic:collections"
+      ],
+      "epic": "collections",
+      "actor": "credit controller",
+      "capability": "reminders to escalate as an invoice ages",
+      "benefit": "we chase a debt while it is still collectable",
+      "status": "green",
+      "spec_hash": "sha256:210fdca591e0fa41150a14f4862f8609",
+      "verified_spec_hash": "sha256:210fdca591e0fa41150a14f4862f8609",
+      "last_green_at": "2026-09-13T06:32:48Z",
+      "last_run_at": "2026-09-13T06:32:48Z",
+      "failure": null,
+      "mutants_killed": 1,
+      "blind_spots": 0,
+      "history": [
+        {
+          "at": "2026-09-13T06:32:47Z",
+          "event": "added",
+          "spec_hash": "sha256:210fdca591e0fa41150a14f4862f8609"
+        }
+      ]
+    },
+    "S-6bc0afcf": {
+      "rid": "S-6bc0afcf",
+      "name": "Yen has no minor unit",
+      "feature": "Currency presentation",
+      "feature_file": "currency.feature",
+      "tags": [
+        "@rid:S-6bc0afcf",
+        "@epic:billing"
+      ],
+      "epic": "billing",
+      "actor": "billing clerk",
+      "capability": "amounts shown in the customer's own currency",
+      "benefit": "an invoice is never misread as the wrong figure",
+      "status": "green",
+      "spec_hash": "sha256:291eb8842e3ebc8e6ca8f8dc119bdca4",
+      "verified_spec_hash": "sha256:291eb8842e3ebc8e6ca8f8dc119bdca4",
+      "last_green_at": "2026-09-13T06:32:48Z",
+      "last_run_at": "2026-09-13T06:32:48Z",
+      "failure": null,
+      "mutants_killed": 5,
+      "blind_spots": 0,
+      "history": [
+        {
+          "at": "2026-09-13T06:32:47Z",
+          "event": "added",
+          "spec_hash": "sha256:291eb8842e3ebc8e6ca8f8dc119bdca4"
+        }
+      ]
+    },
+    "S-88296f2c": {
+      "rid": "S-88296f2c",
+      "name": "Yen rounds to whole units rather than truncating",
+      "feature": "Currency presentation",
+      "feature_file": "currency.feature",
+      "tags": [
+        "@rid:S-88296f2c",
+        "@holdout",
+        "@epic:billing"
+      ],
+      "epic": "billing",
+      "actor": "billing clerk",
+      "capability": "amounts shown in the customer's own currency",
+      "benefit": "an invoice is never misread as the wrong figure",
+      "status": "green",
+      "spec_hash": "sha256:a277cf4dcae20901347f6d644ec347b3",
+      "verified_spec_hash": "sha256:a277cf4dcae20901347f6d644ec347b3",
+      "last_green_at": "2026-09-13T06:32:48Z",
+      "last_run_at": "2026-09-13T06:32:48Z",
+      "failure": null,
+      "mutants_killed": 5,
+      "blind_spots": 0,
+      "history": [
+        {
+          "at": "2026-09-13T06:32:47Z",
+          "event": "added",
+          "spec_hash": "sha256:a277cf4dcae20901347f6d644ec347b3"
+        }
+      ]
+    },
+    "S-8eaaf736": {
+      "rid": "S-8eaaf736",
+      "name": "The day before escalation still gets the gentler notice",
+      "feature": "Overdue reminders",
+      "feature_file": "reminders.feature",
+      "tags": [
+        "@rid:S-8eaaf736",
+        "@holdout",
+        "@epic:collections"
+      ],
+      "epic": "collections",
+      "actor": "credit controller",
+      "capability": "reminders to escalate as an invoice ages",
+      "benefit": "we chase a debt while it is still collectable",
+      "status": "green",
+      "spec_hash": "sha256:a346bba56dbe329e8fc0b30d3c4b64a6",
+      "verified_spec_hash": "sha256:a346bba56dbe329e8fc0b30d3c4b64a6",
+      "last_green_at": "2026-09-13T06:32:48Z",
+      "last_run_at": "2026-09-13T06:32:48Z",
+      "failure": null,
+      "mutants_killed": 3,
+      "blind_spots": 0,
+      "history": [
+        {
+          "at": "2026-09-13T06:32:47Z",
+          "event": "added",
+          "spec_hash": "sha256:a346bba56dbe329e8fc0b30d3c4b64a6"
+        }
+      ]
+    },
+    "S-f0d9d285": {
+      "rid": "S-f0d9d285",
+      "name": "A week late gets a gentle nudge",
+      "feature": "Overdue reminders",
+      "feature_file": "reminders.feature",
+      "tags": [
+        "@rid:S-f0d9d285",
+        "@epic:collections"
+      ],
+      "epic": "collections",
+      "actor": "credit controller",
+      "capability": "reminders to escalate as an invoice ages",
+      "benefit": "we chase a debt while it is still collectable",
+      "status": "green",
+      "spec_hash": "sha256:ba7ef3855fe0c98a6a5dd398f217186a",
+      "verified_spec_hash": "sha256:ba7ef3855fe0c98a6a5dd398f217186a",
+      "last_green_at": "2026-09-13T06:32:48Z",
+      "last_run_at": "2026-09-13T06:32:48Z",
+      "failure": null,
+      "mutants_killed": 3,
+      "blind_spots": 0,
+      "history": [
+        {
+          "at": "2026-09-13T06:32:47Z",
+          "event": "added",
+          "spec_hash": "sha256:ba7ef3855fe0c98a6a5dd398f217186a"
+        }
+      ]
+    }
+  }
+}

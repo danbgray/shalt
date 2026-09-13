@@ -301,7 +301,7 @@ def cmd_tree(args) -> int:
         n = sum(len(st.children) for st in epic.children)
         g = sum(1 for st in epic.children for c in st.children if c.status == "green")
         print(f"\n{_c('EPIC', 'dim')} {_c(epic.label.upper(), 'bold')}  "
-              f"{_c(f'{g}/{n} verified', COLOUR[epic.status])}")
+              f"{_c(f'{g}/{n} upheld', COLOUR[epic.status])}")
         for si, story in enumerate(epic.children):
             last_story = si == len(epic.children) - 1
             sbranch = "└──" if last_story else "├──"

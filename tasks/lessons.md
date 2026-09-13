@@ -60,3 +60,31 @@ a healthy kill count while being blind to every wrong value.
     5 unactionable entries in a 6-entry survivor list, which teaches the reader to ignore it.
 13. Read the line numbers before disbelieving the tool. I was sure a surviving mutant was a bug
     in my mutation engine; it was a real gap in a spec I had written and believed complete.
+
+## 2026-09-13 — the language-agnostic claim was untested, and wrong twice
+
+Shipped "works with any Cucumber-family runner" on the strength of a JSON payload I wrote myself
+and handed to my own parser. The first real runner — cucumber-rs — broke it immediately, and
+then broke mutation testing in a way that produced random scores.
+
+14. **A parser tested only against a payload you authored is tested against your own
+    assumptions.** cucumber-rs strips the `@` from tag names; cucumber-jvm keeps it; the format
+    does not say. My synthetic fixture had the `@` because I wrote both sides. Test protocol
+    adapters against a real implementation of the protocol, or do not claim compatibility.
+15. **A silent bind failure looks like ordinary unfinished work.** Nothing errored — all nine
+    scenarios just read `pending`, which is a perfectly normal state. A wrong answer that
+    resembles a plausible one is far more dangerous than a crash. Where a binding step can bind
+    *zero* things, that should be suspicious by construction, not silent.
+16. **Restoring state is not the same as restoring behaviour.** `shutil.copytree` preserved
+    mtimes, so restored sources looked older than artifacts built from a mutant and cargo skipped
+    the rebuild. The *baseline* then ran mutated code. Same shape as the guard that was never
+    wired in: the thing looked restored and was not.
+17. **Check the result twice when the result is a measurement.** The campaign now re-runs the
+    baseline afterwards and refuses to report a score if the workspace no longer reproduces it.
+    I only found the bug because I distrusted a suspiciously round number — that instinct needs
+    to be a mechanism, not a mood.
+18. **Silence is not evidence.** A mutant run that reported nothing was being counted as
+    "survived", manufacturing findings out of missing data. cucumber-rs exits 0 even when
+    scenarios fail, so "no news" and "good news" were indistinguishable. Absence of evidence
+    must never round toward a conclusion — the same rule the ledger already applies to
+    `pending`, which I had failed to apply here.

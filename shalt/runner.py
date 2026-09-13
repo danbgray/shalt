@@ -21,14 +21,12 @@ def run_suite(root: Path, cfg: Config | None = None) -> dict:
     env = dict(os.environ)
     env["PYTHONPATH"] = os.pathsep.join(
         [str(root), str(root / cfg.src), env.get("PYTHONPATH", "")]).strip(os.pathsep)
-    env.update(cfg.env)
+    env.update(cfg.resolved_env(root))
 
     started = time.time()
     try:
         if cfg.uses_shell:
-            proc = subprocess.run(cfg.command.format(
-                spec=str(root / "spec"), steps=str(root / cfg.steps),
-                src=str(root / cfg.src), report=str(report), root=str(root)),
+            proc = subprocess.run(cfg.command.format(**cfg.placeholders(root)),
                 shell=True, cwd=root, capture_output=True, text=True,
                 env=env, timeout=cfg.timeout)
         else:

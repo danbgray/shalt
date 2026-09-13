@@ -1,0 +1,26 @@
+# shalt workspace configuration
+#
+# shalt is language-agnostic: the zone model, the ledger, scenario identity and the write
+# guards are all language-neutral. Only the runner is not, so it lives here.
+#
+# Scenario binding is by the @rid: tag stamped into each scenario at approval, and that tag
+# survives into every Cucumber-family report -- so any runner that emits Cucumber JSON or
+# Cucumber Messages works without further code.
+
+[project]
+name = "Billing"
+stack = "rust"                     # Rust / cucumber-rs
+
+[zones]
+steps = "tests"                   # step definitions; written by the stepwright only
+src = "src"                       # implementation; written by the implementer only
+
+[runner]
+# Zones match Cargo's own layout. The report path reaches the test binary through [runner].env, because cargo has no flag for it.
+command = "cargo test --test cucumber"
+format = "cucumber-json"                 # shalt | cucumber-json | cucumber-messages
+report = ".shalt/cucumber.json"
+timeout = 900
+
+[runner.env]
+SHALT_REPORT = "{report}"   # the test binary reads this to know where to write

@@ -60,8 +60,13 @@ The reason this works cleanly: **`@rid:` is a Gherkin tag, and a tag survives in
 Cucumber-family report.** So binding a result back to a scenario needs no filename matching, no
 per-language shim, and no guessing — the identity is carried in the report itself.
 
-`shalt init --stack <python|javascript|go|java|ruby|dotnet>` writes a starting config for that
-toolchain. Anything that emits Cucumber JSON or Cucumber Messages works without new code.
+`shalt init --stack <python|javascript|go|java|ruby|dotnet|rust>` writes a starting config for
+that toolchain. Anything that emits Cucumber JSON or Cucumber Messages works without new code.
+
+The claim is exercised, not asserted: [`examples/rust-billing`](examples/rust-billing) is a real
+Cargo project driven through cucumber-rs. It found two bugs on first contact — a tag-spelling
+incompatibility that silently bound nothing, and a stale-binary hazard that made mutation scores
+non-deterministic for every compiled language. Both fixed, both with regression tests.
 
 One rule the parsers enforce: a scenario is green only if **every** step passed. Skipped,
 pending, undefined and ambiguous all count as not-passed — a step nobody implemented is not
