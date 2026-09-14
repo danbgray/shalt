@@ -134,9 +134,8 @@ The important choice was to mock at the **protocol** boundary rather than the ad
 Mocking the adapter would have tested nothing; mocking the wire format tests request
 construction, the tool loop, refusals, retries, usage accounting and the subprocess plumbing.
 
-What it cannot test is judgement. Nothing in this repository demonstrates whether a real model
-writes good Gherkin, whether the stepwright writes honest assertions, or how many turns a real
-build takes.
+The adapter is the live path: `shalt --backend grok` (or `openai`). Judgement is empirical —
+run a real author/steps/build rather than treating the mock as proof of model quality.
 
 ## Adding a backend
 

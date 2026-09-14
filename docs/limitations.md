@@ -3,22 +3,13 @@
 This page exists because a tool whose entire pitch is "your green means something" has to be
 straight about where its own guarantees stop.
 
-## Never run against a live model
+## Live models vs the mock
 
-Every demo and every test uses recorded fixtures or a mocked wire protocol. The Grok/OpenAI
-adapter is fully exercised against `tests/mock_llm.py` — request construction, the tool loop,
-path refusals, retries, usage accounting — so **the plumbing is proven**. A mock has no
-judgement, so nothing here shows:
+`shalt --backend grok` (xAI, `XAI_API_KEY`) and `--backend openai` are the live adapters.
+Path refusals are tested without a network. Fixtures remain the offline demo.
 
-- whether a real model writes Gherkin a stakeholder would actually approve;
-- whether the stepwright writes honest assertions or convenient ones;
-- how many turns a real build takes, or what it costs;
-- whether the interface contract a real stepwright declares is any good.
-
-The `claude-cli` backend is written and **entirely unexercised**.
-
-This is the single largest unknown. When you first run it live, read `steps/` before believing a
-green suite, and run `shalt mutate` immediately afterwards.
+A live green suite still needs `shalt mutate` afterwards: the model that wrote the steps is
+not a proof that the steps assert anything. The `claude-cli` backend is written and unverified.
 
 ## Gherkin's expressiveness ceiling
 

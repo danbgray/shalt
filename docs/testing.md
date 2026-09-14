@@ -1,18 +1,16 @@
 # Testing strategy
 
-108 tests. `python -m pytest tests/ -q` runs everything; `-m "not slow"` skips the four
-mutation-campaign tests, which each need a full suite run per mutant.
+`cargo test --workspace` is the suite. Isolation tests go through `run_role` with a hostile
+backend, never the guard helper.
 
 ```
-tests/
-  test_core.py                 identity, hashing, ledger rules, guards          (14)
-  test_isolation.py            one test per confirmed escape route              (12)
-  test_defects.py              one test per defect found by adversarial review  (14)
-  test_api_backend.py          the OpenAI-compatible adapter, over real HTTP    (23)
-  test_hierarchy_and_viz.py    epic/story, config, report parsers, dashboard    (29)
-  test_mutate.py               operators, report logic, campaigns               (16)
-  mock_llm.py                  an HTTP server speaking the xAI wire protocol
+crates/shalt-core/tests/invariants.rs
+  identity, hashing, ledger, isolation, overlay, jobs, mutation text engine
 ```
+
+The invoice demo (`examples/invoice/demo.sh`) is the end-to-end proof, driven by the Rust
+binary. Python remains only as the *project under test* (pytest-bdd step definitions in the
+fixtures).
 
 ## Three rules this suite is built on
 

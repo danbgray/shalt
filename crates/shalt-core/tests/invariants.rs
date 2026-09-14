@@ -673,6 +673,30 @@ fn same_basename_in_different_directories_does_not_collide() {
 }
 
 #[test]
+fn api_sandbox_refuses_absolute_and_traversal_paths() {
+    let t = TempDir::new().unwrap();
+    let stage = t.path();
+    fs::create_dir_all(stage.join("src")).unwrap();
+    let abs = shalt_core::api::dispatch(stage, "write_file", &serde_json::json!({"path":"/etc/passwd","content":"x"}));
+    assert!(abs.starts_with("REFUSED:"), "{abs}");
+    let trav = shalt_core::api::dispatch(stage, "write_file", &serde_json::json!({"path":"../escape.py","content":"x"}));
+    assert!(trav.starts_with("REFUSED:"), "{trav}");
+    let ok = shalt_core::api::dispatch(stage, "write_file", &serde_json::json!({"path":"src/ok.py","content":"x=1\n"}));
+    assert!(ok.starts_with("wrote "), "{ok}");
+    assert_eq!(fs::read_to_string(stage.join("src/ok.py")).unwrap(), "x=1\n");
+}
+
+#[test]
+fn text_engine_finds_comparison_mutants() {
+    let t = TempDir::new().unwrap();
+    let src = t.path().join("src");
+    fs::create_dir_all(&src).unwrap();
+    fs::write(src.join("n.py"), "def f(x):\n    return x == 1\n").unwrap();
+    let ms = shalt_core::mutate::text_mutants(t.path(), &src);
+    assert!(ms.iter().any(|(m, _)| m.operator == "comparison"), "{ms:?}");
+}
+
+#[test]
 fn crlf_line_endings_survive_stamping() {
     let t = TempDir::new().unwrap();
     let d = t.path().join("spec");

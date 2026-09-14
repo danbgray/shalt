@@ -20,12 +20,12 @@ pub fn preset(stack: &str) -> Option<Preset> {
     Some(match stack {
         "python" => Preset {
             label: "Python / pytest-bdd",
-            command: "python -m pytest -q --no-header {steps}",
+            command: "python3 -m pytest -q --no-header {steps}",
             format: "shalt",
             report: ".shalt/last_run.json",
             src: "src",
             steps: "steps",
-            note: "Workspace-local reporter writes shalt JSON; shalt does not inject a plugin.",
+            note: "Workspace-local conftest.py writes shalt JSON from @rid tags. Uninstalling shalt does not break pytest.",
         },
         "javascript" => Preset {
             label: "JavaScript / cucumber-js",
@@ -205,7 +205,7 @@ impl Config {
 
 pub fn write_config(root: &Path, stack: &str, name: &str) -> Result<Preset, String> {
     let p = preset(stack).ok_or_else(|| format!("unknown stack {stack:?}"))?;
-    let env_block = if stack == "rust" {
+    let env_block = if stack == "rust" || stack == "python" {
         "\n[runner.env]\nSHALT_REPORT = \"{report}\"\n"
     } else {
         ""
@@ -248,16 +248,52 @@ color = "auto"
     Ok(p)
 }
 
+/// Workspace-local pytest plugin. Binds by pytest-bdd tags (`rid:S-xxxxxxxx`).
+/// Lives in the project so uninstalling shalt does not break `pytest`.
 pub fn python_reporter_template() -> &'static str {
-    r#"# workspace-local shalt reporter — lives in this project, not in the shalt binary
-import json, os
+    r#"# workspace-local shalt reporter — not part of the shalt binary
+import json, os, re, sys
 from pathlib import Path
 
-def pytest_sessionfinish(session, exitstatus):
-    report = os.environ.get("SHALT_REPORT")
-    if not report:
+RID_RE = re.compile(r"^rid:(S-[0-9a-f]{8})$")
+_STATE = {"node_to_rid": {}, "outcomes": {}, "report": None}
+
+src = Path(__file__).resolve().parents[1] / "src"
+if str(src) not in sys.path:
+    sys.path.insert(0, str(src))
+
+def pytest_configure(config):
+    _STATE["report"] = os.environ.get("SHALT_REPORT")
+
+def pytest_bdd_before_scenario(request, feature, scenario):
+    for tag in getattr(scenario, "tags", None) or []:
+        name = str(tag).strip().lstrip("@")
+        m = RID_RE.fullmatch(name)
+        if m:
+            _STATE["node_to_rid"][request.node.nodeid] = m.group(1)
+            return
+
+def pytest_runtest_logreport(report):
+    if report.when != "call" and not (report.when == "setup" and report.failed):
         return
-    Path(report).parent.mkdir(parents=True, exist_ok=True)
-    Path(report).write_text(json.dumps({"results": {}, "exitstatus": int(exitstatus)}, indent=2))
+    rid = _STATE["node_to_rid"].get(report.nodeid)
+    if not rid:
+        return
+    outcome = "passed" if report.passed else "failed"
+    detail = str(report.longrepr) if report.failed else ""
+    prev = _STATE["outcomes"].get(rid)
+    if prev is None or (prev["outcome"] == "passed" and outcome == "failed"):
+        _STATE["outcomes"][rid] = {"outcome": outcome, "detail": detail, "nodeid": report.nodeid}
+
+def pytest_sessionfinish(session, exitstatus):
+    path = _STATE["report"]
+    if not path:
+        return
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({
+        "results": _STATE["outcomes"],
+        "exitstatus": int(exitstatus),
+    }, indent=2), encoding="utf-8")
 "#
 }

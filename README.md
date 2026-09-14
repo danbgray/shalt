@@ -5,7 +5,7 @@ then Gherkin scenarios you approve as the contract; isolated agents write the te
 implementation, until every scenario passes — recorded in a ledger whose "green" you can
 actually trust.
 
-`shalt` on PyPI · `@rivlet/shalt` on npm · CLI: `shalt`
+CLI: `shalt` (Rust binary)
 
 ### Why "Shalt"
 
@@ -31,14 +31,10 @@ Status: working prototype. The full loop runs offline, with no API key, via reco
 [limitations](docs/limitations.md)
 
 ```bash
-# Rust binary (primary)
 cargo test --workspace
 cargo run -p shalt -- --help
 cargo run -p shalt -- ui          # localhost UI, Linear-shaped org of projects
-
-# Python prototype (still in-tree; invoice demo)
-pip install -e .
-examples/invoice/demo.sh
+examples/invoice/demo.sh          # offline fixture loop (pytest-bdd for the SUT only)
 ```
 
 ---
@@ -378,12 +374,8 @@ Demonstrated, end to end, in `examples/invoice/demo.sh` and the 37 tests:
 
 Not yet addressed, in rough order of how much they matter:
 
-0. **This has never run against a live model.** The Grok/OpenAI adapter is fully exercised —
-   the whole pipeline runs over real HTTP against a mock that speaks the xAI wire protocol
-   (`tests/mock_llm.py`), covering request construction, the tool loop, refusals, retries and
-   token accounting. But a mock cannot have judgement. Nothing here shows whether a real model
-   writes *good* Gherkin, whether the stepwright writes honest assertions, or how many turns a
-   real build takes. The `claude-cli` backend is written and entirely unexercised.
+0. **Live models.** `shalt --backend grok` talks to xAI (`XAI_API_KEY`, default `grok-4.5`).
+   Isolation still wraps every turn. Judgement quality is an empirical question; run it.
 1. **Gherkin's expressiveness ceiling.** Latency, cost, security posture, UI behaviour — Gherkin
    is bad at all of them. There is currently no escape hatch, which means a spec written only in
    Gherkin is a lie by omission.
@@ -395,20 +387,10 @@ Not yet addressed, in rough order of how much they matter:
 ## Layout
 
 ```
-shalt/
-  spec.py           Gherkin parsing, scenario identity, canonical hashing, holdouts
-  ledger.py         the scenario ledger and its status rules
-  integrity.py      zones, write guards, rollback, standing audit
-  roles.py          staged, guarded turns
-  backends.py       fixture and claude-cli backends
-  runner.py         drives pytest-bdd
-  pytest_plugin.py  maps pytest-bdd outcomes back to scenario ids
-  cli.py
-  narrative.py      user stories: As a / I want / So that
-  config.py         shalt.toml -- what makes the runner language-agnostic
-  reports.py        Cucumber JSON and Cucumber Messages parsers, bound by @rid tag
-  viz.py            the tree, the Mermaid diagrams, the HTML dashboard
-  mutate.py         mutation testing: is the oracle actually asserting anything?
+crates/shalt-core/   spec, ledger, isolation, overlay, jobs, mutate, viz
+crates/shalt/        CLI + localhost UI
+examples/invoice/    offline fixture loop (Python only as the project-under-test)
+examples/rust-billing/
 ```
 
 ## Licence

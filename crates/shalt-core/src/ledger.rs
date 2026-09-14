@@ -298,6 +298,25 @@ impl Ledger {
         }
     }
 
+    pub fn apply_mutation(&mut self, report: &crate::mutate::MutationReport) {
+        self.mutation = report.to_json();
+        let blind = report.blind_spots();
+        for (rid, e) in self.entries.iter_mut() {
+            if report.baseline_green.iter().any(|g| g == rid) {
+                e.mutants_killed = Some(*report.kills.get(rid).unwrap_or(&0));
+                e.blind_spots = Some(blind.get(rid).map(|v| v.len() as i64).unwrap_or(0));
+                if e.mutants_killed == Some(0) {
+                    e.record("VACUOUS", serde_json::json!({"detail": "green but detected no mutation"}));
+                } else if e.blind_spots.unwrap_or(0) > 0 {
+                    e.record(
+                        "BLIND_SPOT",
+                        serde_json::json!({"count": e.blind_spots, "detail": "ran mutated code without noticing"}),
+                    );
+                }
+            }
+        }
+    }
+
     pub fn summary(&self) -> HashMap<String, Value> {
         let mut out = HashMap::from([
             (GREEN.to_string(), 0i64),

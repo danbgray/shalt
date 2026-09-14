@@ -21,6 +21,10 @@ struct Cli {
     backend: String,
     #[arg(long)]
     fixtures: Option<PathBuf>,
+    #[arg(long)]
+    model: Option<String>,
+    #[arg(long)]
+    base_url: Option<String>,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -72,6 +76,16 @@ enum Cmd {
         #[arg(long)]
         no_open: bool,
     },
+    Diagrams,
+    Dashboard,
+    Mutate {
+        #[arg(long, default_value = "auto")]
+        engine: String,
+        #[arg(long, default_value_t = 30)]
+        budget: usize,
+        #[arg(long, default_value_t = 0)]
+        seed: u64,
+    },
 }
 
 #[derive(Subcommand)]
@@ -105,6 +119,19 @@ fn backend(cli: &Cli) -> Result<Box<dyn Backend>, i32> {
                 1
             })?;
             Ok(Box::new(FixtureBackend::new(dir)))
+        }
+        "grok" | "openai" => {
+            match shalt_core::OpenAICompatBackend::from_preset(
+                &cli.backend,
+                cli.model.as_deref(),
+                cli.base_url.as_deref(),
+            ) {
+                Ok(b) => Ok(Box::new(b)),
+                Err(e) => {
+                    eprintln!("{e}");
+                    Err(1)
+                }
+            }
         }
         other => {
             eprintln!("unknown backend {other:?}");
@@ -470,6 +497,86 @@ fn run(cli: Cli) -> Result<i32, i32> {
                     eprintln!("{e}");
                     1
                 })?;
+            Ok(0)
+        }
+        Cmd::Diagrams => {
+            let (led, _) = sync(&root)?;
+            let entries: Vec<_> = led.entries.values().cloned().collect();
+            match shalt_core::viz::write_mermaid(&root, &entries) {
+                Ok(written) => {
+                    println!("wrote {} file(s):", written.len());
+                    for w in written {
+                        println!("  {}", w.display());
+                    }
+                    Ok(0)
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    Ok(1)
+                }
+            }
+        }
+        Cmd::Dashboard => {
+            let (led, _) = sync(&root)?;
+            let name = Config::load(&root).ok().and_then(|c| {
+                if c.name.is_empty() {
+                    None
+                } else {
+                    Some(c.name)
+                }
+            }).unwrap_or_else(|| root.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "project".into()));
+            match shalt_core::viz::write_dashboard(&root, &led, &name) {
+                Ok(p) => {
+                    let s = led.summary();
+                    println!(
+                        "wrote {}  ({} upheld / {} scenarios, {}%)",
+                        p.display(),
+                        s.get("green").and_then(|v| v.as_i64()).unwrap_or(0),
+                        s.get("total").and_then(|v| v.as_i64()).unwrap_or(0),
+                        s.get("completion_pct").and_then(|v| v.as_f64()).unwrap_or(0.0)
+                    );
+                    Ok(0)
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    Ok(1)
+                }
+            }
+        }
+        Cmd::Mutate { engine, budget, seed } => {
+            let (mut led, _) = sync(&root)?;
+            let cfg = Config::load(&root).unwrap_or_default();
+            println!("mutating {}/ — engine {engine}, budget {budget}, seed {seed}", cfg.src);
+            let report = shalt_core::run_campaign(&root, &cfg, engine, *budget, *seed);
+            if !report.error.is_empty() {
+                eprintln!("cannot run: {}", report.error);
+                return Ok(1);
+            }
+            led.apply_mutation(&report);
+            led.save(&ledger_path(&root)).ok();
+            println!(
+                "\nmutation score {}%  ({} killed, {} survived, {} invalid)",
+                report.score(),
+                report.killed().len(),
+                report.survived().len(),
+                report.invalid().len()
+            );
+            if !report.survived().is_empty() {
+                println!("\n{} mutation(s) survived — no scenario noticed:", report.survived().len());
+                for m in report.survived().iter().take(15) {
+                    println!("  {}", m.describe());
+                }
+            }
+            let blind = report.blind_spots();
+            if !blind.is_empty() {
+                println!("\nBLIND SPOTS — mutation(s) ran inside scenarios that stayed green:");
+                for (rid, ms) in &blind {
+                    println!("  {rid}");
+                    for m in ms {
+                        println!("      missed by  {}", m.describe());
+                    }
+                }
+            }
             Ok(0)
         }
     }

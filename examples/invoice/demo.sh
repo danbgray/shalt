@@ -2,9 +2,21 @@
 # Runs all three demos end to end, offline, with no API key.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd "$HERE/../.." && pwd)"
 FIX="$HERE/fixtures"
 WORK="${1:-/tmp/shalt-demo}"
-R="python3 -m shalt.cli"
+if [[ -z "${SHALT:-}" ]]; then
+  cargo build -q -p shalt --manifest-path "$REPO/Cargo.toml"
+  SHALT="$REPO/target/debug/shalt"
+fi
+R="$SHALT"
+mkdir -p "$WORK"
+if ! python3 -c "import pytest_bdd" >/dev/null 2>&1; then
+  VENV="$WORK/.venv"
+  python3 -m venv "$VENV"
+  "$VENV/bin/pip" install -q pytest pytest-bdd
+  export PATH="$VENV/bin:$PATH"
+fi
 
 bootstrap () {  # $1 = workspace
   rm -rf "$1"

@@ -41,6 +41,16 @@ pub fn run_suite(root: &Path, cfg: &Config) -> SuiteRun {
         c
     };
     cmd.current_dir(root);
+    let mut pythonpath = vec![
+        root.display().to_string(),
+        root.join(&cfg.src).display().to_string(),
+    ];
+    if let Ok(existing) = std::env::var("PYTHONPATH") {
+        if !existing.is_empty() {
+            pythonpath.push(existing);
+        }
+    }
+    cmd.env("PYTHONPATH", pythonpath.join(":"));
     for (k, v) in &cfg.env {
         cmd.env(k, cfg.subst(v, root));
     }

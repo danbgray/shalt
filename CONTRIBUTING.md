@@ -37,23 +37,14 @@ A checklist for whoever makes this public, kept here so it does not have to be r
 
 ### Dependency licences
 
-Checked 2026-09-12. All MIT or MIT-compatible:
-
-| dependency | licence |
-|---|---|
-| `gherkin-official` | MIT |
-| `pytest` | MIT |
-| `pytest-bdd` | MIT |
-
-The API backend talks to provider endpoints over plain HTTPS using the standard library, so it
-adds no dependency and no licence obligation.
+Runtime crates are MIT or MIT-compatible (`gherkin`, `serde`, `clap`, `axum`, …).
+The invoice example’s *project under test* still uses pytest-bdd (MIT) as its runner.
 
 ## Working on it
 
 ```bash
-pip install -e .
-python -m pytest tests/ -q          # the whole suite, offline, no API key
-examples/invoice/demo.sh            # the three demos
+cargo test --workspace
+examples/invoice/demo.sh            # needs python3 + pytest + pytest-bdd for the SUT
 ```
 
 Two rules that matter more than style:

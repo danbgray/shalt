@@ -28,3 +28,4 @@ chrono = { version = "0.4", features = ["clock", "serde"] }
 dirs = "6"
 walkdir = "2"
 fs_extra = "1"
+ureq = { version = "2", features = ["json"] }
