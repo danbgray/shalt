@@ -621,8 +621,10 @@ fn ui_registry_prunes_dead_pids() {
         root: "/tmp".into(),
         started_at: "now".into(),
     });
-    let live = shalt_core::uis::prune();
-    assert!(live.is_empty(), "dead pid must not count as a live shalt ui: {live:?}");
+    assert!(
+        shalt_core::uis::current().is_none(),
+        "dead pid must not count as a live shalt ui"
+    );
     std::env::remove_var("SHALT_HOME");
 }
 

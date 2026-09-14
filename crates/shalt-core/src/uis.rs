@@ -1,4 +1,4 @@
-//! Registry of `shalt ui` processes in ~/.shalt/uis.json.
+//! The single `shalt ui` process, recorded in ~/.shalt/ui.json.
 
 use crate::org::Org;
 use serde::{Deserialize, Serialize};
@@ -16,23 +16,29 @@ pub struct UiInstance {
 }
 
 fn path() -> PathBuf {
-    Org::home_dir().join("uis.json")
+    Org::home_dir().join("ui.json")
 }
 
-pub fn load() -> Vec<UiInstance> {
+pub fn load() -> Option<UiInstance> {
     let p = path();
     if !p.exists() {
-        return vec![];
+        return None;
     }
-    serde_json::from_str(&fs::read_to_string(p).unwrap_or_default()).unwrap_or_default()
+    serde_json::from_str(&fs::read_to_string(p).unwrap_or_default()).ok()
 }
 
-pub fn save(list: &[UiInstance]) -> std::io::Result<()> {
+pub fn save(inst: Option<&UiInstance>) -> std::io::Result<()> {
     let p = path();
     if let Some(dir) = p.parent() {
         fs::create_dir_all(dir)?;
     }
-    fs::write(p, serde_json::to_string_pretty(list)? + "\n")
+    match inst {
+        None => {
+            let _ = fs::remove_file(&p);
+            Ok(())
+        }
+        Some(u) => fs::write(p, serde_json::to_string_pretty(u)? + "\n"),
+    }
 }
 
 fn kill_cmd(sig: &str, pid: u32) -> std::io::Result<std::process::ExitStatus> {
@@ -47,37 +53,33 @@ pub fn pid_alive(pid: u32) -> bool {
     kill_cmd("-0", pid).map(|s| s.success()).unwrap_or(false)
 }
 
-pub fn prune() -> Vec<UiInstance> {
-    let kept: Vec<_> = load().into_iter().filter(|u| pid_alive(u.pid)).collect();
-    let _ = save(&kept);
-    kept
+/// The running shalt ui, if the recorded pid is alive and `/api/health` answers.
+pub fn current() -> Option<UiInstance> {
+    let u = load()?;
+    if !pid_alive(u.pid) {
+        let _ = save(None);
+        return None;
+    }
+    if !is_our_ui(u.port) {
+        return None;
+    }
+    Some(u)
 }
 
 pub fn record(inst: UiInstance) {
-    let mut list = prune();
-    list.retain(|u| u.pid != inst.pid && u.port != inst.port);
-    list.push(inst);
-    let _ = save(&list);
+    let _ = save(Some(&inst));
 }
 
-pub fn remove_pid(pid: u32) {
-    let list: Vec<_> = load().into_iter().filter(|u| u.pid != pid).collect();
-    let _ = save(&list);
+pub fn clear() {
+    let _ = save(None);
 }
 
-pub fn remove_port(port: u16) {
-    let list: Vec<_> = load().into_iter().filter(|u| u.port != port).collect();
-    let _ = save(&list);
-}
-
-pub fn by_port(port: u16) -> Option<UiInstance> {
-    prune().into_iter().find(|u| u.port == port)
-}
-
-/// Who is listening on 127.0.0.1:port, if we can tell.
+/// Who is listening on the port, if we can tell.
 pub fn occupant(port: u16) -> Option<(u32, String)> {
-    if let Some(u) = by_port(port) {
-        return Some((u.pid, format!("shalt ui {}", u.url)));
+    if let Some(u) = current() {
+        if u.port == port {
+            return Some((u.pid, format!("shalt ui {}", u.url)));
+        }
     }
     let out = Command::new("lsof")
         .args(["-nP", &format!("-iTCP:{port}"), "-sTCP:LISTEN", "-t"])
@@ -95,7 +97,10 @@ pub fn occupant(port: u16) -> Option<(u32, String)> {
 
 pub fn health(port: u16) -> Option<serde_json::Value> {
     let url = format!("http://127.0.0.1:{port}/api/health");
-    let r = ureq::get(&url).timeout(std::time::Duration::from_millis(400)).call().ok()?;
+    let r = ureq::get(&url)
+        .timeout(std::time::Duration::from_millis(400))
+        .call()
+        .ok()?;
     r.into_json().ok()
 }
 
@@ -107,23 +112,31 @@ pub fn is_our_ui(port: u16) -> bool {
 
 pub fn stop_pid(pid: u32) -> Result<(), String> {
     if !pid_alive(pid) {
-        remove_pid(pid);
+        clear();
         return Ok(());
     }
     let _ = kill_cmd("-TERM", pid);
     for _ in 0..20 {
         if !pid_alive(pid) {
-            remove_pid(pid);
+            clear();
             return Ok(());
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
     let _ = kill_cmd("-KILL", pid);
     std::thread::sleep(std::time::Duration::from_millis(100));
-    remove_pid(pid);
+    clear();
     if pid_alive(pid) {
         Err(format!("pid {pid} did not exit"))
     } else {
         Ok(())
     }
+}
+
+pub fn stop_current() -> Result<Option<UiInstance>, String> {
+    let Some(u) = load() else {
+        return Ok(None);
+    };
+    stop_pid(u.pid)?;
+    Ok(Some(u))
 }

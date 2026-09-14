@@ -223,13 +223,13 @@ into a new project. The sidebar lists projects; each has a board of rids. The CL
 everything the UI can.
 
 ```
-shalt ui                 # start, or reopen if already up on that port
-shalt ui status          # pid, port, url
-shalt ui stop            # this --port (default 7700)
-shalt ui stop --all
+shalt ui              # start, or reopen the one that's already up
+shalt ui status
+shalt ui stop
 shalt ui restart
-shalt ui --port 7701     # another instance
 ```
+
+There is one UI. If 7700 is taken by something else, `shalt ui` binds the next free port in 7700–7799. `--port` is only used when nothing is running.
 
 `shalt org add PATH` registers a git workspace. Overlay edits (rank, milestone, sprint) write
 the board; content edits of a story still write Gherkin.
@@ -313,7 +313,7 @@ shalt stories                    who wants what, and what is missing a narrative
 shalt diagrams                   Mermaid use-case, breakdown and pipeline diagrams
 shalt dashboard                  a self-contained HTML snapshot
 shalt mutate                     mutation-test the oracle
-shalt ui [status|stop|restart]   localhost UI (org / board / jobs)
+shalt ui [status|stop|restart]   one localhost UI
 shalt org add|list|remove        local catalog of projects
 shalt board                      overlay: list / unschedule
 shalt job add|list|show|pause|resume  durable job queue; a running job shows its prompt in the UI

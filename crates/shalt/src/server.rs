@@ -46,7 +46,7 @@ pub async fn serve(root: PathBuf, port: u16, open: bool) -> Result<(), String> {
     })?;
     let bound = listener.local_addr().map_err(|e| e.to_string())?;
     let port = bound.port();
-    if shalt_core::uis::prune().is_empty() {
+    if shalt_core::uis::current().is_none() {
         let mut q = JobQueue::load();
         q.interrupt_orphans();
         let _ = q.save();
