@@ -69,6 +69,21 @@
   .status { font-family: ui-monospace, Menlo, monospace; font-size:12px; }
   .err { color: var(--bad); margin-top: 10px; }
   .pulse { color: var(--mute); }
+  .transcript {
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 12px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    max-height: 18rem;
+    overflow: auto;
+    margin-top: 12px;
+    padding: 10px 12px;
+    background: var(--bg);
+    border-radius: 6px;
+    color: var(--mute);
+    min-height: 0;
+  }
+  .transcript:not(:empty) { min-height: 4rem; }
   @media (max-width: 720px) {
     body { grid-template-columns: 1fr; }
     aside { border-right:0; border-bottom:1px solid var(--line); }
@@ -117,7 +132,7 @@ async function renderOrg(){
         <select name="model">${opts || '<option value="qwen::qwen3.5:35b-128k">qwen3.5:35b-128k (local)</option>'}</select>
         <button type="submit" id="send">Specify</button>
       </div>
-      <div id="compose-msg" class="mono"></div>
+      <pre id="compose-log" class="transcript" aria-live="polite"></pre>
     </form>
     ${org.projects.map(p => `<div class="card">
       <div class="row"><a href="#" onclick="renderProject('${esc(p.id)}');return false;" style="font-size:18px;color:inherit;text-decoration:none">${esc(p.name)}</a>
@@ -138,38 +153,40 @@ async function submitCompose(ev){
   const [backend, ...rest] = form.model.value.split('::');
   const model = rest.join('::');
   const btn = document.getElementById('send');
-  const msg = document.getElementById('compose-msg');
+  const logEl = document.getElementById('compose-log');
   btn.disabled = true;
-  msg.textContent = 'Creating the project and asking the model to write the spec…';
-  msg.className = 'mono pulse';
+  logEl.textContent = 'creating project…\n';
   try {
     const res = await api('/api/compose', {
       method:'POST',
       headers:{'content-type':'application/json'},
       body: JSON.stringify({ prompt, backend, model })
     });
-    msg.textContent = 'Authoring ' + res.project.id + '…';
+    logEl.textContent += 'authoring ' + res.project.id + '…\n';
     await waitForJob(res.job.id);
     renderProject(res.project.id);
   } catch (e) {
-    msg.className = 'err';
-    msg.textContent = e.message || String(e);
+    logEl.className = 'transcript err';
+    logEl.textContent = (logEl.textContent || '') + '\n' + (e.message || String(e));
     btn.disabled = false;
   }
   return false;
 }
 
 async function waitForJob(id){
-  for (let i=0; i<240; i++){
+  for (let i=0; i<600; i++){
     const q = await api('/api/jobs');
     const j = (q.jobs||[]).find(x => x.id === id);
-    const msg = document.getElementById('compose-msg');
-    if (msg && j) msg.textContent = (j.status || '') + (j.log ? ' — ' + j.log : '');
+    const logEl = document.getElementById('compose-log');
+    if (logEl && j) {
+      logEl.textContent = j.log || (j.status + '…');
+      logEl.scrollTop = logEl.scrollHeight;
+    }
     if (j && (j.status === 'done' || j.status === 'failed' || j.status === 'interrupted')) {
       if (j.status !== 'done') throw new Error(j.log || j.status);
       return j;
     }
-    await new Promise(r => setTimeout(r, 1500));
+    await new Promise(r => setTimeout(r, 400));
   }
   throw new Error('timed out waiting for the author');
 }

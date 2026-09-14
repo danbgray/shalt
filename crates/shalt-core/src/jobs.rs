@@ -126,6 +126,28 @@ impl JobQueue {
         }
     }
 
+    pub fn set_status(&mut self, id: &str, status: JobStatus) -> bool {
+        if let Some(j) = self.jobs.iter_mut().find(|j| j.id == id) {
+            j.status = status;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn append(&mut self, id: &str, line: &str) -> bool {
+        if let Some(j) = self.jobs.iter_mut().find(|j| j.id == id) {
+            if !j.log.is_empty() && !j.log.ends_with('\n') {
+                j.log.push('\n');
+            }
+            j.log.push_str(line.trim_end());
+            j.log.push('\n');
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn interrupt_running(&mut self) {
         for j in &mut self.jobs {
             if j.status == JobStatus::Running {

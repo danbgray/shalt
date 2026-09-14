@@ -145,6 +145,7 @@ pub struct OpenAICompatBackend {
     pub api_key: String,
     pub max_steps: usize,
     pub timeout_secs: u64,
+    pub on_progress: Option<Box<dyn FnMut(&str) + Send>>,
 }
 
 impl OpenAICompatBackend {
@@ -174,7 +175,14 @@ impl OpenAICompatBackend {
             api_key,
             max_steps: 40,
             timeout_secs: 180,
+            on_progress: None,
         })
+    }
+
+    fn emit(&mut self, line: &str) {
+        if let Some(cb) = &mut self.on_progress {
+            cb(line);
+        }
     }
 
     fn post(&self, payload: &Value) -> Result<Value, String> {
@@ -282,7 +290,9 @@ impl Backend for OpenAICompatBackend {
             json!({"role":"user","content": format!("{prompt}\n\nFiles you can see:\n{}", tree(stage))}),
         ];
         let mut transcript = Vec::new();
+        self.emit(&format!("contacting {}…", self.model));
         for step in 0..self.max_steps {
+            self.emit(&format!("step {}: waiting on the model…", step + 1));
             let payload = json!({
                 "model": self.model,
                 "messages": messages,
@@ -305,11 +315,19 @@ impl Backend for OpenAICompatBackend {
             }
             messages.push(assistant);
             let Some(arr) = calls.as_array() else {
-                transcript.push(msg.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string());
+                let text = msg.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                if !text.trim().is_empty() {
+                    self.emit(&text);
+                }
+                transcript.push(text);
                 break;
             };
             if arr.is_empty() {
-                transcript.push(msg.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string());
+                let text = msg.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                if !text.trim().is_empty() {
+                    self.emit(&text);
+                }
+                transcript.push(text);
                 break;
             }
             let mut finished = false;
@@ -325,7 +343,9 @@ impl Backend for OpenAICompatBackend {
                 } else {
                     dispatch(stage, fname, &args)
                 };
-                transcript.push(format!("[{fname}] {}", result.chars().take(200).collect::<String>()));
+                let line = format!("[{fname}] {}", result.chars().take(200).collect::<String>());
+                self.emit(&line);
+                transcript.push(line);
                 messages.push(json!({
                     "role": "tool",
                     "tool_call_id": call.get("id").cloned().unwrap_or(json!("")),

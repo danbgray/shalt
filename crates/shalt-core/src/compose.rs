@@ -56,7 +56,8 @@ pub fn execute_author(job_id: &str) -> Result<String, String> {
         .find(|j| j.id == job_id)
         .cloned()
         .ok_or_else(|| format!("no job {job_id}"))?;
-    q.update(job_id, JobStatus::Running, "authoring spec…");
+    q.set_status(job_id, JobStatus::Running);
+    q.append(job_id, &format!("authoring spec with {}…", if job.model.is_empty() { job.backend.as_str() } else { job.model.as_str() }));
     let _ = q.save();
     let org = Org::load();
     let project = org
@@ -68,6 +69,12 @@ pub fn execute_author(job_id: &str) -> Result<String, String> {
         if job.model.is_empty() { None } else { Some(job.model.as_str()) },
         None,
     )?;
+    let jid = job_id.to_string();
+    backend.on_progress = Some(Box::new(move |line: &str| {
+        let mut q = JobQueue::load();
+        q.append(&jid, line);
+        let _ = q.save();
+    }));
     let prompt = format!(
         "Translate this request into Gherkin feature files under spec/.\n\nREQUEST:\n{}\n",
         job.prompt
@@ -84,13 +91,15 @@ pub fn execute_author(job_id: &str) -> Result<String, String> {
                 board.sync_new_rids(&features);
                 let _ = board.save(&root.join(".shalt/board.json"));
             }
-            let log = format!("wrote {}: {}", res.wrote.len(), res.wrote.join(", "));
-            q.update(job_id, JobStatus::Done, &log);
+            let summary = format!("wrote {}: {}", res.wrote.len(), res.wrote.join(", "));
+            q.append(job_id, &summary);
+            q.set_status(job_id, JobStatus::Done);
             let _ = q.save();
-            Ok(log)
+            Ok(summary)
         }
         Err(e) => {
-            q.update(job_id, JobStatus::Failed, &e.to_string());
+            q.append(job_id, &format!("failed: {e}"));
+            q.set_status(job_id, JobStatus::Failed);
             let _ = q.save();
             Err(e.to_string())
         }

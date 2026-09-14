@@ -611,6 +611,20 @@ fn verify_fails_on_dangling_overlay_rid() {
 }
 
 #[test]
+fn job_log_appends_without_clobbering() {
+    let t = TempDir::new().unwrap();
+    let path = t.path().join("jobs.json");
+    let mut q = JobQueue::default();
+    q.enqueue(JobKind::Author, "invoice");
+    q.append(&q.jobs[0].id.clone(), "step 1: waiting on the model…");
+    q.append(&q.jobs[0].id.clone(), "[write_file] wrote spec/invoice.feature (120 bytes)");
+    q.save_to(&path).unwrap();
+    let q2 = JobQueue::load_from(&path);
+    assert!(q2.jobs[0].log.contains("step 1"));
+    assert!(q2.jobs[0].log.contains("invoice.feature"));
+}
+
+#[test]
 fn jobs_are_durable_and_interrupted_is_retryable() {
     let t = TempDir::new().unwrap();
     let path = t.path().join("jobs.json");
