@@ -5,7 +5,7 @@ then Gherkin scenarios you approve as the contract; isolated agents write the te
 implementation, until every scenario passes — recorded in a ledger whose "green" you can
 actually trust.
 
-CLI: `shalt` (Rust binary)
+CLI: `shalt` — a Rust binary. Localhost UI: `shalt ui`. Live models: `--backend grok`.
 
 ### Why "Shalt"
 
@@ -21,8 +21,6 @@ what must hold. The ledger records which obligations are upheld, and the rule be
 directly — an obligation is owed against its exact wording, so reword it and nothing has been
 discharged.
 
-Status: working prototype. The full loop runs offline, with no API key, via recorded fixtures.
-
 **Technical documentation:** [docs/](docs/) — [architecture](docs/architecture.md) ·
 [isolation & threat model](docs/isolation.md) · [ledger schema](docs/ledger.md) ·
 [identity & hashing](docs/identity.md) · [runners](docs/runners.md) ·
@@ -33,8 +31,10 @@ Status: working prototype. The full loop runs offline, with no API key, via reco
 ```bash
 cargo test --workspace
 cargo run -p shalt -- --help
-cargo run -p shalt -- ui          # localhost UI, Linear-shaped org of projects
-examples/invoice/demo.sh          # offline fixture loop (pytest-bdd for the SUT only)
+cargo run -p shalt -- ui                    # localhost UI (org → project → board)
+examples/invoice/demo.sh                    # offline fixture loop
+export XAI_API_KEY=...
+cargo run -p shalt -- --backend grok author "what you want built"
 ```
 
 ---
@@ -63,7 +63,9 @@ Cucumber-family report.** So binding a result back to a scenario needs no filena
 per-language shim, and no guessing — the identity is carried in the report itself.
 
 `shalt init --stack <python|javascript|go|java|ruby|dotnet|rust>` writes a starting config for
-that toolchain. Anything that emits Cucumber JSON or Cucumber Messages works without new code.
+that toolchain. A Python workspace gets a **project-local** `conftest.py` that writes shalt JSON
+from `@rid:` tags; uninstalling shalt does not break `pytest`. Anything that emits Cucumber JSON
+or Cucumber Messages works without new code.
 
 The claim is exercised, not asserted: [`examples/rust-billing`](examples/rust-billing) is a real
 Cargo project driven through cucumber-rs. It found two bugs on first contact — a tag-spelling
@@ -99,11 +101,13 @@ Isolation is enforced in three layers, because each one alone is defeatable:
    anywhere — a symlink inside an allowed zone is a write to wherever it points.
 3. **The real workspace is hashed before and after** the turn, so a backend that writes by
    absolute path is still caught, and protected zones are restored from backup. The ledger
-   itself is protected on every turn; no role may write it.
+   and the board overlay are protected on every turn; no role may write them.
 
-`tests/test_isolation.py` is the record of this: each test there is an escape that worked
-against an earlier version — relative traversal, absolute writes, symlinked directories,
-symlinked files masquerading as source modules, and rewriting the ledger to forge an approval.
+`crates/shalt-core/tests/invariants.rs` is the record of this: each isolation test is an escape
+that worked against an earlier version — relative traversal, absolute writes, a file at the
+stage root, and rewriting the ledger to forge an approval. Tests go through `run_role` with a
+hostile backend, never the guard helper, because a helper with passing tests that the pipeline
+never called is how this product was once a lie.
 
 ```
 turn 1 REJECTED -- role 'implementer' wrote outside its zone -> steps: steps/test_invoice.py
@@ -182,7 +186,7 @@ That sentence *is* a use case diagram. "As a &lt;actor&gt;" is the actor, "I wan
 diagrams are **derived, not drawn** — which means they cannot drift away from the spec. There is
 no second artefact to keep in sync.
 
-The breakdown is three levels, all expressed in Gherkin with nothing on the side:
+The breakdown is three levels, all expressed in Gherkin:
 
 | level | where it comes from |
 |---|---|
@@ -190,13 +194,17 @@ The breakdown is three levels, all expressed in Gherkin with nothing on the side
 | **story** | the feature, plus its `As a / I want / So that` narrative |
 | **task** | one scenario |
 
+Scheduling (goals, milestones, optional sprints, rank) is a Linear-style **overlay**
+(`.shalt/board.json`). It points at rids; it does not copy their text. Rank and sprint
+assignment do not rewrite the spec. Changing a story's wording still writes `spec/` and goes
+stale. `shalt verify` fails if the board points at a rid that is gone.
+
 ```
 $ shalt tree
 
 EPIC BILLING  7/9 verified
  ├── STORY Currency presentation
- │        As a billing clerk, I want amounts shown in the customer's own currency, so that
- │        an invoice is never misread as the wrong figure
+ │        As a billing clerk, I want amounts shown in the customer's own currency
  │   ├── x red      Euros use the euro sign S-30d6398c
  │   ├── + green    US dollars lead with the symbol and group thousands S-d36e2796
  │   └── + green    Yen rounds to whole units rather than truncating [holdout] S-0bae3a95
@@ -206,6 +214,15 @@ EPIC BILLING  7/9 verified
 ```
 
 `shalt stories` lists who wants what, and names any feature missing a narrative.
+
+## UI
+
+`shalt ui` binds `127.0.0.1` (default port 7700) and opens a Linear-shaped view of a local org:
+projects, a dashboard of notch-meters, a board of rids, and a job queue. The CLI can do
+everything the UI can; the UI cannot do anything the CLI cannot.
+
+`shalt org add PATH` registers a git workspace. Overlay edits (rank, milestone, sprint) write
+the board; content edits of a story still write Gherkin.
 
 ## Diagrams and dashboard
 
@@ -219,16 +236,11 @@ ledger and the spec:
 `.mmd` plus `.md` wrappers, so they render in GitHub, in pull requests and in most editors with
 no toolchain.
 
-`shalt dashboard` writes `docs/dashboard.html`: one self-contained file, no network and no
-build step, showing the verified-progress meter, the derived use case diagram, and the full
-breakdown with each scenario's status, id and failing assertion. Light and dark, and it works at
-phone width.
+`shalt dashboard` writes `docs/dashboard.html`: one self-contained snapshot for git. The live
+UI is the working surface; regenerate the snapshot after a run.
 
-Two deliberate choices in it. Human intent is set in a serif and machine state in a mono, so a
-story's "As a billing clerk…" reads as prose while every id, hash and status reads as fact. And
-the progress meter is drawn as discrete notches rather than a smooth bar — one per scenario,
-because obligations are discrete. A scenario is either upheld or it is not; there is no such
-thing as 63% of a scenario, so the ornament encodes a real count instead of a percentage.
+Human intent is set in a serif and machine state in a mono. Progress is discrete notches, one
+per scenario — obligations are discrete.
 
 ## Mutation-testing the oracle
 
@@ -252,46 +264,15 @@ BLIND SPOTS — 2 mutation(s) ran inside scenarios that stayed green:
       missed by  An invoice with several line items
 ```
 
-Attribution is what makes this more useful than a suite-wide mutation score. Every mutant
-records which scenarios went red, so each scenario gets its own count — and a scenario's kills
-reveal which files it provably executes, giving coverage-like attribution with no
-language-specific coverage tool.
-
 Two signals, and **neither alone is sufficient**:
 
 - **vacuous** — the scenario detected nothing at all.
 - **blind spot** — the scenario has a healthy kill count but still ran broken code silently.
 
-The second exists because the first is too weak on its own: a vacuous assertion still notices
-mutations that *crash* the code, so a meaningless assertion can post a good kill count. What it
-cannot notice is a well-formed wrong value. Which signal fires depends on whether the sampled
-mutations crash or merely change a value, so `weak_oracles` is the union and the thing to check.
-
-A blind spot is one of two defects, and they need different fixes:
-
-- the assertion does not check the value → **the step definitions are weak**;
-- no scenario exercises the case the mutation changes → **the spec is missing a scenario**,
-  usually a boundary the narrative implies but no example pins down.
-
-This cannot tell them apart, because it does not know which inputs each scenario uses. Both are
-real defects in the spec/test pair, so both get surfaced. On the worked example — a spec written
-by hand and believed complete — it found a redundant config entry masked by its own default, a
-missing scenario for an unsupported currency code, and a missing odd-cent rounding case.
-
-Two limitations that bound what the score means:
-
-1. **Equivalent mutants.** Some mutations do not change behaviour at all. Those survive for
-   reasons unrelated to the oracle. A survivor is a question, not a proven defect.
-2. **Coverage confounds strength.** A mutant on a line no scenario reaches survives because
-   nothing runs it. Survivors are reported with file and line so a human keeps that distinction.
-
-Docstrings are never mutated — a mutated docstring always survives, which would fill the
-survivor list with findings nobody can act on. Mutants that break the suite itself are counted
-`invalid` and excluded rather than scored, because they prove nothing about the assertions.
-
-Engines: `python` mutates the AST (comparisons, arithmetic, booleans, numeric, string and
-boolean literals); `text` is deliberately crude and works on Go, JavaScript, Java, Ruby and C#.
-`auto` picks by stack.
+The engine is `text` (comparisons, booleans, literals) and is language-agnostic. Mutants that
+break the suite itself are `invalid` and excluded. After the campaign the sources are restored
+and mtimes bumped so compiled-language toolchains rebuild; a baseline that does not reproduce
+is refused rather than scored. Silence is not evidence of survival.
 
 ## The ledger
 
@@ -309,88 +290,87 @@ green and green expires when the spec moves.
 ## Commands
 
 ```
-shalt init                       scaffold a workspace
-shalt author "<request>"         English -> Gherkin under spec/
-shalt approve --by <you>         human sign-off; stamps ids, locks the spec
+shalt init [--stack NAME]        scaffold a workspace
+shalt author "<request>"         English → Gherkin under spec/
+shalt approve --yes --by <you>   human sign-off; stamps ids, locks the spec
 shalt steps                      stepwright writes steps/ + contract/
 shalt build [--max-turns N]      implementer loop until green, then verify with holdouts
 shalt run                        run the suite, update the ledger
 shalt status                     the ledger, as a progress view
-shalt verify                     standing integrity audit
-shalt tree                       epic -> story -> scenario, with status
+shalt verify                     standing integrity audit (spec lock + overlay drift)
+shalt tree                       epic → story → scenario, with status
 shalt stories                    who wants what, and what is missing a narrative
 shalt diagrams                   Mermaid use-case, breakdown and pipeline diagrams
-shalt dashboard                  a self-contained HTML dashboard
-shalt mutate                     mutation-test the oracle: do the scenarios mean anything?
+shalt dashboard                  a self-contained HTML snapshot
+shalt mutate                     mutation-test the oracle
+shalt ui                         localhost UI (org / board / jobs)
+shalt org add|list|remove        local catalog of projects
+shalt board                      overlay: list / unschedule
+shalt job add|list               durable job queue
 ```
 
 ## Backends
 
 - `--backend fixture --fixtures <dir>` — replays recorded turns. Offline, deterministic; this
-  is what the tests and the demo use.
-- `--backend grok` — xAI, via its OpenAI-compatible API. Needs `XAI_API_KEY`.
-- `--backend openai` — same adapter, different preset. Needs `OPENAI_API_KEY`.
-- `--backend claude-cli` — runs each role as a headless `claude -p` turn inside its staged
-  directory.
+  is what the tests and `examples/invoice/demo.sh` use.
+- `--backend grok` — xAI chat-completions. Needs `XAI_API_KEY`. Default model `grok-4.5`.
+- `--backend openai` — same adapter. Needs `OPENAI_API_KEY`.
 
-Adding a backend is one class with a `run(role, prompt, stage)` method.
+Adding a backend is one type that implements `Backend::run(role, prompt, stage)`.
 
 ### Running it against Grok
 
 ```bash
 export XAI_API_KEY=...
-shalt --root ./work init
-shalt --root ./work --backend grok author "<what you want built>"
+cargo run -p shalt -- --root ./work init
+cargo run -p shalt -- --root ./work --backend grok author "<what you want built>"
 $EDITOR work/spec/*.feature          # this is the review gate; it is the cheap one
-shalt --root ./work approve --by you@example.com
-shalt --root ./work --backend grok steps
-shalt --root ./work --backend grok build --max-turns 8
-shalt --root ./work verify
+cargo run -p shalt -- --root ./work approve --yes --by you@example.com
+cargo run -p shalt -- --root ./work --backend grok steps
+cargo run -p shalt -- --root ./work --backend grok build --max-turns 8
+cargo run -p shalt -- --root ./work verify
+cargo run -p shalt -- --root ./work mutate
 ```
 
-`--model` overrides the default (`grok-4`); if that name is wrong the error lists what your key
-can actually see. `--base-url` points the same adapter at any other OpenAI-compatible endpoint.
+`--model` overrides the default. `--base-url` points the same adapter at any other
+OpenAI-compatible endpoint.
 
 The model works through four scoped tools — `list_files`, `read_file`, `write_file`, `done` —
 rather than a shell. Every path is resolved inside the stage first: absolute paths are refused
 outright rather than reinterpreted, traversal is refused, and any symlinked component is
-refused. A refusal goes back to the model as a tool result, so it can correct course instead of
-crashing the turn. That sandbox is the first of the three layers, not a replacement for the
-workspace guard, which still hashes and rolls back around every turn.
+refused. A refusal goes back to the model as a tool result. That sandbox is the first of the
+three layers, not a replacement for the workspace guard, which still hashes and rolls back
+around every turn.
 
-## What this prototype does and does not prove
+## What this does and does not prove
 
-Demonstrated, end to end, in `examples/invoice/demo.sh` and the 37 tests:
+Demonstrated, end to end, in `examples/invoice/demo.sh` and `cargo test --workspace` (32 tests):
 
 - the pipeline runs: prompt → Gherkin → human approval → step definitions → implementation → green
-- an implementer that edits the tests is caught and rolled back — by five different routes
+- an implementer that edits the tests is caught and rolled back
 - an implementer that overfits to visible examples is caught by holdouts
 - a stepwright that writes assertions testing nothing is caught by mutation testing
-- held-out scenarios' failure text is never shown to the implementer
-- editing an approved scenario stales exactly that scenario's green and no other
-- `shalt verify` detects any edit, addition or deletion made since sign-off
-- breaking a passing scenario, or deleting the test that proved it, is recorded as a regression
-- deleting failing scenarios does not silently inflate the completion figure
+- editing an approved scenario stales exactly that scenario's green
+- losing the test that proved a scenario is a regression; orphan is not absorbing
+- the API path sandbox refuses absolute paths and traversal without a network
 
 Not yet addressed, in rough order of how much they matter:
 
-0. **Live models.** `shalt --backend grok` talks to xAI (`XAI_API_KEY`, default `grok-4.5`).
-   Isolation still wraps every turn. Judgement quality is an empirical question; run it.
 1. **Gherkin's expressiveness ceiling.** Latency, cost, security posture, UI behaviour — Gherkin
-   is bad at all of them. There is currently no escape hatch, which means a spec written only in
-   Gherkin is a lie by omission.
-2. **Holdouts are a sample, not a proof.** They catch crude overfitting. A sufficiently capable
-   implementer generalises just far enough to pass them.
+   is bad at all of them. There is currently no escape hatch.
+2. **Holdouts are a sample, not a proof.** They catch crude overfitting.
+3. **Live judgement.** The Grok adapter is in the binary. Whether a real model writes Gherkin a
+   stakeholder would approve is an empirical question for a key with credits.
 4. **No cost or turn accounting.** A build loop that runs 40 turns should say what it spent.
-5. **Non-Python runners.** The zone model is language-agnostic; the runner is not.
 
 ## Layout
 
 ```
-crates/shalt-core/   spec, ledger, isolation, overlay, jobs, mutate, viz
-crates/shalt/        CLI + localhost UI
-examples/invoice/    offline fixture loop (Python only as the project-under-test)
-examples/rust-billing/
+crates/shalt-core/     spec, ledger, isolation, overlay, jobs, mutate, viz, grok/openai adapter
+crates/shalt/          CLI + embedded localhost UI
+examples/invoice/      offline fixture loop (Python only as the project-under-test)
+examples/rust-billing/ cucumber-rs workspace
+docs/                  architecture, isolation, ledger, CLI
 ```
 
 ## Licence
