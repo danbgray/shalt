@@ -34,7 +34,7 @@ struct Cli {
     model: Option<String>,
     #[arg(long)]
     base_url: Option<String>,
-    /// After authoring, approve the spec and write tests (for `shall <sentence>` / `shalt do`)
+    /// Required for `shalt approve` (re-lock after you edit the spec).
     #[arg(long, short = 'y', global = true)]
     yes: bool,
     #[arg(long, global = true, default_value = "local")]
@@ -98,7 +98,7 @@ enum Cmd {
         #[arg(long, default_value_t = 0)]
         seed: u64,
     },
-    /// English sentence → spec (and with --yes, approve + tests)
+    /// English sentence → spec → tests
     Do {
         #[arg(trailing_var_arg = true, required = true, allow_hyphen_values = true)]
         sentence: Vec<String>,
@@ -222,7 +222,7 @@ fn main() {
             .and_then(|s| s.to_str())
             .unwrap_or("shalt");
         if stem == "shall" {
-            eprintln!("shall <what the system shall do>\n  English → Gherkin spec.  --yes also approves and writes tests.");
+            eprintln!("shall <what the system shall do>\n  English → Gherkin spec → tests.");
             std::process::exit(2);
         }
     }
@@ -857,11 +857,6 @@ fn cmd_specify(cli: &Cli, root: &Path, sentence: &str) -> Result<i32, i32> {
             }
         }
     }
-    if !cli.yes {
-        println!("\nReview spec/, then:\n  shalt --yes approve\n  shalt steps");
-        println!("Or: shall --yes \"{sentence}\"");
-        return Ok(0);
-    }
     let by = if cli.by == "local" {
         std::env::var("USER").unwrap_or_else(|_| "local".into())
     } else {
@@ -894,7 +889,6 @@ fn cmd_specify(cli: &Cli, root: &Path, sentence: &str) -> Result<i32, i32> {
         "scenario_hashes": hashes,
     });
     led.save(&ledger_path(root)).ok();
-    println!("approved by {by}");
     println!("writing tests…");
     let mut b = live_backend(cli)?;
     match run_role(
@@ -909,7 +903,7 @@ fn cmd_specify(cli: &Cli, root: &Path, sentence: &str) -> Result<i32, i32> {
             for w in res.wrote {
                 println!("  {w}");
             }
-            println!("\nNext: shalt --backend {} build", cli.backend);
+            println!("\nNext: shalt build");
             Ok(0)
         }
         Err(RoleError::Integrity(e)) => {

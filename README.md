@@ -1,7 +1,7 @@
 # Shalt
 
 **English sentence → formalized logic → tests → code.** A plain request becomes user stories,
-then Gherkin scenarios you approve as the contract; isolated agents write the tests, then the
+then Gherkin scenarios; isolated agents write the tests, then the
 implementation, until every scenario passes — recorded in a ledger whose "green" you can
 actually trust.
 
@@ -31,8 +31,7 @@ discharged.
 ```bash
 cargo test --workspace
 cargo run -p shalt -- --help
-shall total invoices exactly in the customer's currency   # English → spec
-shall --yes total invoices exactly                        # spec + approve + tests
+shall total invoices exactly in the customer's currency   # English → spec → tests
 shalt ui                                                  # same compose box in the browser
 examples/invoice/demo.sh                                  # offline fixture loop
 ```
@@ -300,11 +299,10 @@ green and green expires when the spec moves.
 ## Commands
 
 ```
-shall <sentence>                 English → spec (same as the UI compose box)
-shall --yes <sentence>           then approve and write tests
+shall <sentence>                 English → spec → tests
 shalt init [--stack NAME]        scaffold a workspace
 shalt author "<request>"         English → Gherkin under spec/ (long form)
-shalt approve --yes --by <you>   human sign-off; stamps ids, locks the spec
+shalt approve --yes --by <you>   re-lock hashes after you edit the spec
 shalt steps                      stepwright writes steps/ + contract/
 shalt build [--max-turns N]      implementer loop until green, then verify with holdouts
 shalt run                        run the suite, update the ledger
@@ -335,15 +333,13 @@ Adding a backend is one type that implements `Backend::run(role, prompt, stage)`
 
 ```bash
 export XAI_API_KEY=...
-cargo run -p shalt -- --root ./work init
-cargo run -p shalt -- --root ./work --backend grok author "<what you want built>"
-$EDITOR work/spec/*.feature          # this is the review gate; it is the cheap one
-cargo run -p shalt -- --root ./work approve --yes --by you@example.com
-cargo run -p shalt -- --root ./work --backend grok steps
-cargo run -p shalt -- --root ./work --backend grok build --max-turns 8
-cargo run -p shalt -- --root ./work verify
-cargo run -p shalt -- --root ./work mutate
+shall --backend grok --root ./work "what you want built"   # spec + tests
+shalt --root ./work --backend grok build --max-turns 8
+shalt --root ./work verify
+shalt --root ./work mutate
 ```
+
+If you edit Gherkin afterwards, `shalt approve --yes` re-locks hashes so green stays bound to the new wording. That is a re-lock, not a gate on the first sentence.
 
 `--model` overrides the default. `--base-url` points the same adapter at any other
 OpenAI-compatible endpoint.
