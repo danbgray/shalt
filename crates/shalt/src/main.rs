@@ -8,7 +8,8 @@ use shalt_core::ledger::{Ledger, GREEN, ORPHAN, PENDING, RED, STALE};
 use shalt_core::org::Org;
 use shalt_core::roles::run_role;
 use shalt_core::runner::run_suite;
-use shalt_core::spec::{holdout_rids, load_specs, stamp_rids};
+use shalt_core::spec::{drop_scenario_blocks, holdout_rids, load_specs, stamp_rids};
+use std::io::{self, BufRead, IsTerminal, Write};
 use shalt_core::{author_user_prompt, Backend, OpenAICompatBackend, RoleError};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -34,7 +35,7 @@ struct Cli {
     model: Option<String>,
     #[arg(long)]
     base_url: Option<String>,
-    /// Required for `shalt approve` (re-lock after you edit the spec).
+    /// Accept every generated scenario (skip y/n). Also required for `shalt approve`.
     #[arg(long, short = 'y', global = true)]
     yes: bool,
     #[arg(long, global = true, default_value = "local")]
@@ -222,7 +223,7 @@ fn main() {
             .and_then(|s| s.to_str())
             .unwrap_or("shalt");
         if stem == "shall" {
-            eprintln!("shall <what the system shall do>\n  English → Gherkin spec → tests.");
+            eprintln!("shall <what the system shall do>\n  English → Gherkin. Each scenario is y/n unless you pass --yes, then tests.");
             std::process::exit(2);
         }
     }
@@ -811,6 +812,68 @@ fn live_backend(cli: &Cli) -> Result<OpenAICompatBackend, i32> {
     Ok(b)
 }
 
+fn prompt_yn(label: &str) -> Result<bool, i32> {
+    let stdin = io::stdin();
+    let mut stdout = io::stdout();
+    loop {
+        print!("{label} [y/n] ");
+        let _ = stdout.flush();
+        let mut line = String::new();
+        if stdin.lock().read_line(&mut line).is_err() {
+            return Err(1);
+        }
+        match line.trim().to_lowercase().as_str() {
+            "y" | "yes" => return Ok(true),
+            "n" | "no" => return Ok(false),
+            _ => eprintln!("  type y or n"),
+        }
+    }
+}
+
+fn review_scenarios(root: &Path) -> Result<usize, i32> {
+    if !io::stdin().is_terminal() {
+        eprintln!("not a terminal; pass --yes to accept every scenario");
+        return Err(2);
+    }
+    let spec = root.join("spec");
+    let features = load_specs(&spec, true).map_err(|e| {
+        eprintln!("{}", e.message());
+        4
+    })?;
+    let mut drop: Vec<(String, usize)> = Vec::new();
+    let mut kept = 0usize;
+    for f in &features {
+        let path = spec.join(&f.file);
+        let raw = std::fs::read_to_string(&path).unwrap_or_default();
+        let lines: Vec<String> = raw.replace("\r\n", "\n").split('\n').map(|s| s.to_string()).collect();
+        let n = if lines.last().map(|s| s.is_empty()).unwrap_or(false) {
+            lines.len() - 1
+        } else {
+            lines.len()
+        };
+        println!("\nFeature: {}  ({})", f.name, f.file);
+        for (sc, start, end) in f.blocks(n) {
+            let s = start.saturating_sub(1);
+            let e = end.saturating_sub(1).min(n);
+            let body = if s < e { lines[s..e].join("\n") } else { sc.name.clone() };
+            println!("\n{body}\n");
+            if prompt_yn("Keep this scenario?")? {
+                kept += 1;
+            } else {
+                drop.push((f.file.clone(), start));
+                println!("  dropped.");
+            }
+        }
+    }
+    if !drop.is_empty() {
+        drop_scenario_blocks(&spec, &drop).map_err(|e| {
+            eprintln!("{e}");
+            1
+        })?;
+    }
+    Ok(kept)
+}
+
 fn cmd_specify(cli: &Cli, root: &Path, sentence: &str) -> Result<i32, i32> {
     let sentence = sentence.trim();
     if sentence.is_empty() {
@@ -847,14 +910,14 @@ fn cmd_specify(cli: &Cli, root: &Path, sentence: &str) -> Result<i32, i32> {
         }
     }
     let _ = sync(root);
-    if let Ok(rd) = std::fs::read_dir(root.join("spec")) {
-        for e in rd.flatten() {
-            if e.path().extension().and_then(|s| s.to_str()) == Some("feature") {
-                println!("\n----- {} -----", e.path().display());
-                if let Ok(text) = std::fs::read_to_string(e.path()) {
-                    print!("{text}");
-                }
+    if !cli.yes {
+        match review_scenarios(root) {
+            Ok(0) => {
+                eprintln!("nothing kept; not writing tests");
+                return Ok(0);
             }
+            Ok(_) => {}
+            Err(c) => return Err(c),
         }
     }
     let by = if cli.by == "local" {

@@ -31,7 +31,8 @@ discharged.
 ```bash
 cargo test --workspace
 cargo run -p shalt -- --help
-shall total invoices exactly in the customer's currency   # English → spec → tests
+shall total invoices exactly in the customer's currency   # spec, then y/n each scenario, then tests
+shall --yes total invoices exactly                        # accept every scenario, then tests
 shalt ui                                                  # same compose box in the browser
 examples/invoice/demo.sh                                  # offline fixture loop
 ```
@@ -299,7 +300,8 @@ green and green expires when the spec moves.
 ## Commands
 
 ```
-shall <sentence>                 English → spec → tests
+shall <sentence>                 English → spec, y/n each scenario, then tests
+shall --yes <sentence>           accept every scenario, then tests
 shalt init [--stack NAME]        scaffold a workspace
 shalt author "<request>"         English → Gherkin under spec/ (long form)
 shalt approve --yes --by <you>   re-lock hashes after you edit the spec

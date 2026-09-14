@@ -476,6 +476,60 @@ pub fn duplicate_rids(features: &[Feature]) -> Vec<(String, String)> {
     problems
 }
 
+/// Drop scenario blocks from feature files. `drop` is `(relative path, block_start line)`.
+/// Empty feature files are removed.
+pub fn drop_scenario_blocks(spec_dir: &Path, drop: &[(String, usize)]) -> std::io::Result<usize> {
+    if drop.is_empty() {
+        return Ok(0);
+    }
+    let mut by_file: HashMap<String, Vec<usize>> = HashMap::new();
+    for (file, start) in drop {
+        by_file.entry(file.clone()).or_default().push(*start);
+    }
+    let mut removed = 0usize;
+    for (rel, mut starts) in by_file {
+        starts.sort_unstable();
+        starts.dedup();
+        let path = spec_dir.join(&rel);
+        let raw = fs::read_to_string(&path)?;
+        let newline = if raw.contains("\r\n") { "\r\n" } else { "\n" };
+        let feat = match parse_text(&raw.replace("\r\n", "\n"), &rel) {
+            Ok(Some(f)) => f,
+            _ => continue,
+        };
+        let mut lines: Vec<String> = raw.replace("\r\n", "\n").split('\n').map(|s| s.to_string()).collect();
+        if lines.last().map(|s| s.is_empty()).unwrap_or(false) {
+            lines.pop();
+        }
+        let blocks = feat.blocks(lines.len());
+        let mut ranges: Vec<(usize, usize)> = blocks
+            .into_iter()
+            .filter(|(_, start, _)| starts.contains(start))
+            .map(|(_, start, end)| (start, end))
+            .collect();
+        ranges.sort_by_key(|(s, _)| std::cmp::Reverse(*s));
+        for (start, end) in ranges {
+            let s = start.saturating_sub(1);
+            let e = end.saturating_sub(1).min(lines.len());
+            if s < e {
+                lines.drain(s..e);
+                removed += 1;
+            }
+        }
+        let leftover = parse_text(&(lines.join("\n") + "\n"), &rel)
+            .ok()
+            .flatten();
+        if leftover.as_ref().map(|f| f.scenarios.is_empty()).unwrap_or(true) {
+            fs::remove_file(&path)?;
+        } else {
+            let mut out = lines.join(newline);
+            out.push_str(newline);
+            fs::write(&path, out)?;
+        }
+    }
+    Ok(removed)
+}
+
 pub fn strip_holdouts(text: &str) -> String {
     let newline = if text.contains("\r\n") { "\r\n" } else { "\n" };
     let normalized = text.replace("\r\n", "\n");

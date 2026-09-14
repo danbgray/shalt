@@ -241,6 +241,33 @@ fn ledger_round_trips() {
 }
 
 #[test]
+fn dropping_a_scenario_block_leaves_the_other() {
+    let t = TempDir::new().unwrap();
+    let d = t.path().join("spec");
+    fs::create_dir_all(&d).unwrap();
+    fs::write(
+        d.join("f.feature"),
+        "Feature: X\n\n  Scenario: Keep me\n    Given a thing\n    Then it works\n\n  Scenario: Drop me\n    Given a thing\n    Then it works\n",
+    )
+    .unwrap();
+    let features = load_specs(&d, true).unwrap();
+    let drop_start = features[0]
+        .scenarios
+        .iter()
+        .find(|s| s.name == "Drop me")
+        .unwrap()
+        .block_start();
+    shalt_core::spec::drop_scenario_blocks(&d, &[("f.feature".into(), drop_start)]).unwrap();
+    let names: Vec<_> = load_specs(&d, true)
+        .unwrap()
+        .into_iter()
+        .flat_map(|f| f.scenarios)
+        .map(|s| s.name)
+        .collect();
+    assert_eq!(names, vec!["Keep me".to_string()]);
+}
+
+#[test]
 fn holdouts_are_stripped_for_the_implementer_but_stay_in_the_ledger() {
     let t = TempDir::new().unwrap();
     let d = write_spec(t.path(), FEATURE);
