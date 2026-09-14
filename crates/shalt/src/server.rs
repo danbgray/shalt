@@ -23,6 +23,7 @@ const UI: &str = include_str!("ui.html");
 struct App {
     root: PathBuf,
     live: Arc<Mutex<HashSet<String>>>,
+    port: u16,
 }
 
 fn spawn_author(app: &App, job_id: String) {
@@ -35,13 +36,32 @@ fn spawn_author(app: &App, job_id: String) {
 }
 
 pub async fn serve(root: PathBuf, port: u16, open: bool) -> Result<(), String> {
-    {
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| {
+        if e.kind() == std::io::ErrorKind::AddrInUse {
+            format!("ADDR_IN_USE:{port}")
+        } else {
+            e.to_string()
+        }
+    })?;
+    let bound = listener.local_addr().map_err(|e| e.to_string())?;
+    let port = bound.port();
+    if shalt_core::uis::prune().is_empty() {
         let mut q = JobQueue::load();
         q.interrupt_orphans();
         let _ = q.save();
     }
+    let url = format!("http://127.0.0.1:{port}/");
+    shalt_core::uis::record(shalt_core::uis::UiInstance {
+        pid: std::process::id(),
+        port,
+        url: url.clone(),
+        root: root.display().to_string(),
+        started_at: chrono::Utc::now().to_rfc3339(),
+    });
     let app = Router::new()
         .route("/", get(index))
+        .route("/api/health", get(api_health))
         .route("/api/org", get(api_org))
         .route("/api/models", get(api_models))
         .route("/api/compose", post(api_compose))
@@ -51,16 +71,22 @@ pub async fn serve(root: PathBuf, port: u16, open: bool) -> Result<(), String> {
         .with_state(Arc::new(App {
             root,
             live: Arc::new(Mutex::new(HashSet::new())),
+            port,
         }));
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .map_err(|e| e.to_string())?;
     if open {
-        let url = format!("http://127.0.0.1:{port}/");
         let _ = std::process::Command::new("open").arg(&url).spawn();
     }
+    eprintln!("shalt ui on {url}  pid {}", std::process::id());
     axum::serve(listener, app).await.map_err(|e| e.to_string())
+}
+
+async fn api_health(State(app): State<Arc<App>>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "ok": true,
+        "pid": std::process::id(),
+        "port": app.port,
+        "root": app.root.display().to_string(),
+    }))
 }
 
 async fn index() -> Html<&'static str> {

@@ -611,6 +611,22 @@ fn verify_fails_on_dangling_overlay_rid() {
 }
 
 #[test]
+fn ui_registry_prunes_dead_pids() {
+    let t = TempDir::new().unwrap();
+    std::env::set_var("SHALT_HOME", t.path());
+    shalt_core::uis::record(shalt_core::uis::UiInstance {
+        pid: 999_999_999,
+        port: 7700,
+        url: "http://127.0.0.1:7700/".into(),
+        root: "/tmp".into(),
+        started_at: "now".into(),
+    });
+    let live = shalt_core::uis::prune();
+    assert!(live.is_empty(), "dead pid must not count as a live shalt ui: {live:?}");
+    std::env::remove_var("SHALT_HOME");
+}
+
+#[test]
 fn job_pause_and_prompt_edit() {
     let t = TempDir::new().unwrap();
     let path = t.path().join("jobs.json");

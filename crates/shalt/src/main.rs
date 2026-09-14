@@ -7,7 +7,7 @@ use shalt_core::jobs::{JobKind, JobQueue};
 use shalt_core::ledger::{Ledger, GREEN, ORPHAN, PENDING, RED, STALE};
 use shalt_core::org::Org;
 use shalt_core::roles::run_role;
-use shalt_core::runner::run_suite;
+use shalt_core::runner::{harness_report, run_suite};
 use shalt_core::spec::{holdout_rids, load_specs, stamp_rids};
 use shalt_core::{Backend, RoleError};
 use std::path::{Path, PathBuf};
@@ -71,10 +71,13 @@ enum Cmd {
         action: JobCmd,
     },
     Ui {
-        #[arg(long, default_value_t = 7700)]
-        port: u16,
-        #[arg(long)]
+        /// Bind this port. If omitted, reuse a running shalt ui or pick 7700–7799.
+        #[arg(long, global = true)]
+        port: Option<u16>,
+        #[arg(long, global = true)]
         no_open: bool,
+        #[command(subcommand)]
+        action: Option<UiAction>,
     },
     Diagrams,
     Dashboard,
@@ -86,6 +89,19 @@ enum Cmd {
         #[arg(long, default_value_t = 0)]
         seed: u64,
     },
+}
+
+#[derive(Subcommand)]
+enum UiAction {
+    /// List running shalt ui processes
+    Status,
+    /// Stop a shalt ui (default: this --port; --all for every registered instance)
+    Stop {
+        #[arg(long)]
+        all: bool,
+    },
+    /// Stop then start on this --port
+    Restart,
 }
 
 #[derive(Subcommand)]
@@ -288,7 +304,7 @@ fn run(cli: Cli) -> Result<i32, i32> {
             let run = run_suite(&root, &cfg);
             if run.harness_error {
                 eprintln!("the test harness failed to run");
-                eprintln!("{}", run.stderr);
+                eprintln!("{}", harness_report(&run));
                 return Ok(3);
             }
             let out = led.apply_run(&run.results, &run.run_id, &run.collection_error);
@@ -317,6 +333,7 @@ fn run(cli: Cli) -> Result<i32, i32> {
                 let run = run_suite(&root, &cfg);
                 if run.harness_error {
                     eprintln!("turn {turn}: the test harness failed to run");
+                    eprintln!("{}", harness_report(&run));
                     return Ok(3);
                 }
                 led.apply_run(&run.results, &format!("turn{turn}"), &run.collection_error);
@@ -535,15 +552,15 @@ fn run(cli: Cli) -> Result<i32, i32> {
                 Ok(0)
             }
         },
-        Cmd::Ui { port, no_open } => {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(crate::server::serve(root.clone(), *port, !*no_open))
-                .map_err(|e| {
-                    eprintln!("{e}");
-                    1
-                })?;
-            Ok(0)
-        }
+        Cmd::Ui { port, no_open, action } => match action {
+            None => cmd_ui_start(&root, *port, !*no_open),
+            Some(UiAction::Status) => cmd_ui_status(),
+            Some(UiAction::Stop { all }) => cmd_ui_stop(*port, *all),
+            Some(UiAction::Restart) => {
+                let _ = cmd_ui_stop(*port, true);
+                cmd_ui_start(&root, *port, !*no_open)
+            }
+        },
         Cmd::Diagrams => {
             let (led, _) = sync(&root)?;
             let entries: Vec<_> = led.entries.values().cloned().collect();
@@ -625,6 +642,129 @@ fn run(cli: Cli) -> Result<i32, i32> {
             Ok(0)
         }
     }
+}
+
+fn reopen_ui(port: u16, open: bool) -> Result<i32, i32> {
+    let url = format!("http://127.0.0.1:{port}/");
+    println!("already running at {url}");
+    if open {
+        let _ = std::process::Command::new("open").arg(&url).spawn();
+    }
+    println!("  shalt ui status | shalt ui stop | shalt ui restart | shalt ui --port <n>");
+    Ok(0)
+}
+
+fn print_in_use(port: u16) {
+    eprintln!("port {port} is already in use");
+    if let Some((pid, who)) = shalt_core::uis::occupant(port) {
+        eprintln!("  pid {pid}  {who}");
+    }
+    eprintln!("  shalt ui status");
+    eprintln!("  shalt ui stop --all");
+    eprintln!("  shalt ui --port <n>       # start another");
+}
+
+fn cmd_ui_start(root: &Path, port: Option<u16>, open: bool) -> Result<i32, i32> {
+    if let Some(p) = port {
+        if shalt_core::uis::is_our_ui(p) {
+            return reopen_ui(p, open);
+        }
+        return serve_ui(root, p, open);
+    }
+    let existing: Vec<_> = shalt_core::uis::prune()
+        .into_iter()
+        .filter(|u| shalt_core::uis::is_our_ui(u.port))
+        .collect();
+    if let Some(u) = existing.first() {
+        return reopen_ui(u.port, open);
+    }
+    for p in 7700..=7799 {
+        if shalt_core::uis::occupant(p).is_some() {
+            continue;
+        }
+        match serve_ui(root, p, open) {
+            Err(1) => continue,
+            other => return other,
+        }
+    }
+    eprintln!("no free port in 7700–7799");
+    print_in_use(7700);
+    Err(1)
+}
+
+fn serve_ui(root: &Path, port: u16, open: bool) -> Result<i32, i32> {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    match rt.block_on(crate::server::serve(root.to_path_buf(), port, open)) {
+        Ok(()) => Ok(0),
+        Err(e) if e.starts_with("ADDR_IN_USE:") => {
+            print_in_use(port);
+            Err(1)
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            Err(1)
+        }
+    }
+}
+
+fn cmd_ui_status() -> Result<i32, i32> {
+    let list = shalt_core::uis::prune();
+    if list.is_empty() {
+        println!("no shalt ui registered");
+        if let Some((pid, who)) = shalt_core::uis::occupant(7700) {
+            println!("port 7700 is held by pid {pid} ({who}) — not in the shalt registry");
+        }
+        return Ok(0);
+    }
+    println!("pid     port   url                          root");
+    for u in &list {
+        let health = if shalt_core::uis::is_our_ui(u.port) { "up" } else { "stale" };
+        println!(
+            "{:<7} {:<6} {:<28} {}  [{health}]",
+            u.pid, u.port, u.url, u.root
+        );
+    }
+    Ok(0)
+}
+
+fn cmd_ui_stop(port: Option<u16>, all: bool) -> Result<i32, i32> {
+    let list = shalt_core::uis::prune();
+    let targets: Vec<_> = if all || port.is_none() {
+        list
+    } else {
+        let p = port.unwrap();
+        list.into_iter().filter(|u| u.port == p).collect()
+    };
+    if targets.is_empty() {
+        let p = port.unwrap_or(7700);
+        if let Some((pid, who)) = shalt_core::uis::occupant(p) {
+            if who.contains("shalt") {
+                if let Err(e) = shalt_core::uis::stop_pid(pid) {
+                    eprintln!("{e}");
+                    return Err(1);
+                }
+                println!("stopped pid {pid} on port {p}");
+                return Ok(0);
+            }
+            eprintln!("port {p} is pid {pid} ({who}), not a shalt ui");
+            eprintln!("  shalt ui status");
+            eprintln!("  shalt ui --port <n>    # start on a free port");
+            return Err(1);
+        }
+        println!("no shalt ui to stop");
+        return Ok(0);
+    }
+    let mut failed = false;
+    for u in targets {
+        match shalt_core::uis::stop_pid(u.pid) {
+            Ok(()) => println!("stopped pid {}  {}", u.pid, u.url),
+            Err(e) => {
+                eprintln!("{e}");
+                failed = true;
+            }
+        }
+    }
+    if failed { Err(1) } else { Ok(0) }
 }
 
 fn status_glyph(st: &str) -> &'static str {

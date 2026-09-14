@@ -15,6 +15,7 @@ pub mod reports;
 pub mod roles;
 pub mod runner;
 pub mod spec;
+pub mod uis;
 pub mod viz;
 
 pub use api::{list_models, ModelChoice, OpenAICompatBackend};
