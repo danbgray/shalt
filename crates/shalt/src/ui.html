@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>shalt</title>
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --line:#2a3140; --ink:#e8e4d9; --mute:#8b93a7; --ok:#3dba7a; --bad:#e05d4e; --warn:#d4a017; --accent:#6b8cce; }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#f4f1ea; --panel:#fff; --line:#ddd6c8; --ink:#1a1f26; --mute:#5c6578; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--ink); font: 15px/1.45 ui-sans-serif, system-ui; }
+  body { display:grid; grid-template-columns: 240px 1fr; }
+  aside { border-right:1px solid var(--line); padding:20px 16px; background:var(--panel); }
+  aside h1 { font-family: ui-serif, Georgia, serif; font-size:22px; margin:0 0 4px; font-weight:600; }
+  aside .sub { font-family: ui-monospace, Menlo, monospace; font-size:11px; color:var(--mute); letter-spacing:.04em; }
+  nav a { display:block; padding:8px 10px; border-radius:6px; color:var(--ink); text-decoration:none; }
+  nav a:hover, nav a.on { background:#ffffff10; }
+  main { padding:28px 32px; overflow:auto; }
+  h2 { font-family: ui-serif, Georgia, serif; font-weight:600; margin:0 0 16px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin-bottom:12px; }
+  .notches { display:flex; gap:3px; flex-wrap:wrap; margin:8px 0 4px; }
+  .notch { width:10px; height:16px; border-radius:2px; background:var(--line); }
+  .notch.green { background:var(--ok); }
+  .notch.red { background:var(--bad); }
+  .notch.stale { background:var(--warn); }
+  .mono { font-family: ui-monospace, Menlo, monospace; font-size:12px; color:var(--mute); }
+  .row { display:flex; justify-content:space-between; gap:12px; align-items:baseline; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:6px; padding:8px 12px; cursor:pointer; }
+  table { width:100%; border-collapse:collapse; }
+  td, th { text-align:left; padding:8px 6px; border-bottom:1px solid var(--line); }
+  .status { font-family: ui-monospace, Menlo, monospace; font-size:12px; }
+</style>
+</head>
+<body>
+<aside>
+  <h1>shalt</h1>
+  <div class="sub" id="org-name">org</div>
+  <nav id="nav" style="margin-top:24px"></nav>
+</aside>
+<main id="main"><p class="mono">loading…</p></main>
+<script>
+async function api(path, opts){ const r = await fetch(path, opts); if(!r.ok) throw new Error(await r.text()); return r.json(); }
+function notches(green, total){
+  const n = Math.max(total, 0);
+  let h = '';
+  for(let i=0;i<n;i++) h += `<span class="notch ${i<green?'green':''}"></span>`;
+  return `<div class="notches">${h}</div>`;
+}
+async function renderOrg(){
+  const org = await api('/api/org');
+  document.getElementById('org-name').textContent = org.name;
+  document.getElementById('nav').innerHTML =
+    `<a href="#" class="on" onclick="renderOrg();return false;">Dashboard</a>` +
+    org.projects.map(p => `<a href="#" onclick="renderProject('${p.id}');return false;">${p.name}</a>`).join('');
+  const jobs = await api('/api/jobs');
+  document.getElementById('main').innerHTML = `
+    <h2>Org dashboard</h2>
+    ${org.projects.map(p => `<div class="card">
+      <div class="row"><strong style="font-family:ui-serif,Georgia,serif">${p.name}</strong>
+        <span class="mono">${p.missing ? 'path missing' : p.path}</span></div>
+      ${notches(p.green, p.total)}
+      <div class="mono">${p.green}/${p.total} upheld</div>
+    </div>`).join('') || '<p class="mono">No projects. shalt org add PATH</p>'}
+    <div class="card"><div class="row"><strong>Jobs</strong>
+      <span><button onclick="queueJob()">queue run</button></span></div>
+      <table>${(jobs.jobs||[]).map(j => `<tr><td class="mono">${j.id}</td><td>${j.kind}</td><td>${j.project_id}</td><td class="status">${j.status}</td></tr>`).join('')}</table>
+    </div>`;
+}
+async function renderProject(id){
+  const p = await api('/api/project/'+id);
+  document.querySelectorAll('nav a').forEach(a => a.classList.remove('on'));
+  document.getElementById('main').innerHTML = `
+    <h2>${id}</h2>
+    <p class="mono">${p.summary.green||0} upheld · ${p.summary.red||0} failing · ${p.summary.pending||0} no test</p>
+    ${notches(p.summary.green||0, (p.summary.total||0)-(p.summary.orphan||0))}
+    ${(p.stories||[]).map(s => `<div class="card">
+      <div style="font-family:ui-serif,Georgia,serif">${s.name}</div>
+      <div>${s.narrative||''}</div>
+      <table>${s.tasks.map(t => `<tr>
+        <td class="status">${t.status}</td>
+        <td style="font-family:ui-serif,Georgia,serif">${t.name}${t.holdout?' <span class="mono">holdout</span>':''}</td>
+        <td class="mono">${t.rid||''}</td></tr>`).join('')}</table>
+    </div>`).join('')}
+    <div class="card"><strong>Board</strong>
+      <table>${(p.board.items||[]).map(i => `<tr><td class="mono">${i.rid}</td><td>rank ${i.rank}</td><td>${i.sprint_id||'backlog'}</td></tr>`).join('')}</table>
+    </div>`;
+}
+async function queueJob(){
+  const org = await api('/api/org');
+  const project = (org.projects[0]||{}).id || 'default';
+  await api('/api/jobs', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({kind:'run', project})});
+  renderOrg();
+}
+renderOrg().catch(e => document.getElementById('main').innerHTML = '<p>'+e+'</p>');
+</script>
+</body>
+</html>

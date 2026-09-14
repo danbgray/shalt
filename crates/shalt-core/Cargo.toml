@@ -1,0 +1,22 @@
+[package]
+name = "shalt-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Spec, ledger, isolation, overlay and jobs for shalt"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+regex.workspace = true
+sha2.workspace = true
+hex.workspace = true
+rand.workspace = true
+thiserror.workspace = true
+tempfile.workspace = true
+gherkin.workspace = true
+chrono.workspace = true
+dirs.workspace = true
+walkdir.workspace = true
+fs_extra.workspace = true

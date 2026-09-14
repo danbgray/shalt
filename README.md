@@ -31,6 +31,12 @@ Status: working prototype. The full loop runs offline, with no API key, via reco
 [limitations](docs/limitations.md)
 
 ```bash
+# Rust binary (primary)
+cargo test --workspace
+cargo run -p shalt -- --help
+cargo run -p shalt -- ui          # localhost UI, Linear-shaped org of projects
+
+# Python prototype (still in-tree; invoice demo)
 pip install -e .
 examples/invoice/demo.sh
 ```

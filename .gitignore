@@ -3,3 +3,5 @@ __pycache__/
 .ratchet/stage/
 .ratchet/backup/
 .ratchet/last_run.json
+target/
+.pytest_cache/

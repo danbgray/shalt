@@ -1,0 +1,30 @@
+[workspace]
+resolver = "2"
+members = ["crates/shalt-core", "crates/shalt"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/rivletio/shalt"
+
+[workspace.dependencies]
+shalt-core = { path = "crates/shalt-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+regex = "1"
+sha2 = "0.10"
+hex = "0.4"
+rand = "0.8"
+thiserror = "2"
+tempfile = "3"
+gherkin = { version = "0.14", default-features = false, features = ["parser"] }
+clap = { version = "4", features = ["derive"] }
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.6", features = ["fs"] }
+chrono = { version = "0.4", features = ["clock", "serde"] }
+dirs = "6"
+walkdir = "2"
+fs_extra = "1"
