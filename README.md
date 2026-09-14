@@ -307,7 +307,7 @@ shalt mutate                     mutation-test the oracle
 shalt ui                         localhost UI (org / board / jobs)
 shalt org add|list|remove        local catalog of projects
 shalt board                      overlay: list / unschedule
-shalt job add|list               durable job queue
+shalt job add|list|show|pause|resume  durable job queue; a running job shows its prompt in the UI
 ```
 
 ## Backends

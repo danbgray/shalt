@@ -4,24 +4,42 @@ use axum::routing::{get, post};
 use axum::Router;
 use serde::Serialize;
 use shalt_core::board::Board;
-use shalt_core::compose::{execute_author, start_project, ComposeRequest};
-use shalt_core::jobs::JobQueue;
+use shalt_core::compose::{
+    author_system_prompt, author_user_prompt, execute_author, start_project, ComposeRequest,
+};
+use shalt_core::jobs::{JobQueue, JobStatus};
 use shalt_core::ledger::Ledger;
 use shalt_core::list_models;
 use shalt_core::org::Org;
 use shalt_core::spec::load_specs;
+use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 const UI: &str = include_str!("ui.html");
 
 #[derive(Clone)]
 struct App {
     root: PathBuf,
+    live: Arc<Mutex<HashSet<String>>>,
+}
+
+fn spawn_author(app: &App, job_id: String) {
+    let live = app.live.clone();
+    live.lock().unwrap().insert(job_id.clone());
+    tokio::task::spawn_blocking(move || {
+        let _ = execute_author(&job_id);
+        live.lock().unwrap().remove(&job_id);
+    });
 }
 
 pub async fn serve(root: PathBuf, port: u16, open: bool) -> Result<(), String> {
+    {
+        let mut q = JobQueue::load();
+        q.interrupt_orphans();
+        let _ = q.save();
+    }
     let app = Router::new()
         .route("/", get(index))
         .route("/api/org", get(api_org))
@@ -29,7 +47,11 @@ pub async fn serve(root: PathBuf, port: u16, open: bool) -> Result<(), String> {
         .route("/api/compose", post(api_compose))
         .route("/api/project/{id}", get(api_project))
         .route("/api/jobs", get(api_jobs).post(api_enqueue))
-        .with_state(Arc::new(App { root }));
+        .route("/api/jobs/{id}", get(api_job).post(api_job_action))
+        .with_state(Arc::new(App {
+            root,
+            live: Arc::new(Mutex::new(HashSet::new())),
+        }));
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let listener = tokio::net::TcpListener::bind(addr)
         .await
@@ -111,7 +133,7 @@ struct ComposeBody {
     name: Option<String>,
 }
 
-async fn api_compose(Json(body): Json<ComposeBody>) -> impl IntoResponse {
+async fn api_compose(State(app): State<Arc<App>>, Json(body): Json<ComposeBody>) -> impl IntoResponse {
     match start_project(ComposeRequest {
         prompt: body.prompt,
         backend: body.backend,
@@ -119,10 +141,7 @@ async fn api_compose(Json(body): Json<ComposeBody>) -> impl IntoResponse {
         name: body.name,
     }) {
         Ok((project, job)) => {
-            let job_id = job.id.clone();
-            tokio::task::spawn_blocking(move || {
-                let _ = execute_author(&job_id);
-            });
+            spawn_author(&app, job.id.clone());
             Json(serde_json::json!({ "project": project, "job": job })).into_response()
         }
         Err(e) => (axum::http::StatusCode::BAD_REQUEST, e).into_response(),
@@ -197,6 +216,64 @@ async fn api_project(State(app): State<Arc<App>>, Path(id): Path<String>) -> imp
 
 async fn api_jobs() -> Json<JobQueue> {
     Json(JobQueue::load())
+}
+
+async fn api_job(Path(id): Path<String>) -> impl IntoResponse {
+    let q = JobQueue::load();
+    match q.get(&id) {
+        Some(j) => Json(serde_json::json!({
+            "job": j,
+            "system": author_system_prompt(),
+            "user": author_user_prompt(&j.prompt),
+        }))
+        .into_response(),
+        None => (axum::http::StatusCode::NOT_FOUND, "no such job").into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct JobAction {
+    #[serde(default)]
+    action: String,
+    #[serde(default)]
+    prompt: Option<String>,
+}
+
+async fn api_job_action(
+    State(app): State<Arc<App>>,
+    Path(id): Path<String>,
+    Json(body): Json<JobAction>,
+) -> impl IntoResponse {
+    let mut q = JobQueue::load();
+    if q.get(&id).is_none() {
+        return (axum::http::StatusCode::NOT_FOUND, "no such job").into_response();
+    }
+    if let Some(p) = body.prompt.as_deref() {
+        q.set_prompt(&id, p);
+        q.append(&id, "prompt saved");
+    }
+    match body.action.as_str() {
+        "pause" => {
+            q.set_status(&id, JobStatus::Paused);
+            q.append(&id, "pause requested — takes effect after the current model call");
+        }
+        "resume" => {
+            q.set_status(&id, JobStatus::Running);
+            q.append(&id, "resume");
+            let live = app.live.lock().unwrap().contains(&id);
+            if !live {
+                drop(q.save());
+                spawn_author(&app, id.clone());
+            }
+        }
+        "save" | "" => {}
+        other => {
+            return (axum::http::StatusCode::BAD_REQUEST, format!("unknown action {other}")).into_response();
+        }
+    }
+    let _ = q.save();
+    let q = JobQueue::load();
+    Json(q.get(&id).cloned()).into_response()
 }
 
 #[derive(serde::Deserialize)]

@@ -5,3 +5,5 @@ __pycache__/
 .ratchet/last_run.json
 target/
 .pytest_cache/
+
+.shalt/

@@ -611,6 +611,21 @@ fn verify_fails_on_dangling_overlay_rid() {
 }
 
 #[test]
+fn job_pause_and_prompt_edit() {
+    let t = TempDir::new().unwrap();
+    let path = t.path().join("jobs.json");
+    let mut q = JobQueue::default();
+    let job = q.enqueue_full(JobKind::Author, "invoice", "old request", "qwen", "qwen3.5:2b");
+    q.set_status(&job.id, JobStatus::Running);
+    q.set_status(&job.id, JobStatus::Paused);
+    q.set_prompt(&job.id, "new request");
+    q.save_to(&path).unwrap();
+    let q2 = JobQueue::load_from(&path);
+    assert_eq!(q2.jobs[0].status, JobStatus::Paused);
+    assert_eq!(q2.jobs[0].prompt, "new request");
+}
+
+#[test]
 fn job_log_appends_without_clobbering() {
     let t = TempDir::new().unwrap();
     let path = t.path().join("jobs.json");

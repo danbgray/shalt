@@ -19,7 +19,7 @@ pub const ROLE_SYSTEM: &[(&str, &str)] = &[
     ("implementer", "You are the IMPLEMENTER in a BDD pipeline. You see the spec, the interface contract, and the failing test output -- you do NOT see the step definitions, and you cannot edit them. Write code under src/ that satisfies the specified behaviour against the contract. Do not special-case test inputs or hard-code expected outputs; implement the behaviour. Only create files under src/."),
 ];
 
-fn system_for(role: &str) -> &'static str {
+pub fn system_for(role: &str) -> &'static str {
     ROLE_SYSTEM
         .iter()
         .find(|(r, _)| *r == role)
@@ -146,7 +146,12 @@ pub struct OpenAICompatBackend {
     pub max_steps: usize,
     pub timeout_secs: u64,
     pub on_progress: Option<Box<dyn FnMut(&str) + Send>>,
+    /// Called before each model round. `None` = continue, `Some(text)` = inject a user
+    /// message then continue, `Err` = stop the turn.
+    pub on_gate: Option<Box<dyn FnMut() -> Result<Option<String>, String> + Send>>,
 }
+
+
 
 impl OpenAICompatBackend {
     pub fn from_preset(
@@ -176,6 +181,7 @@ impl OpenAICompatBackend {
             max_steps: 40,
             timeout_secs: 180,
             on_progress: None,
+            on_gate: None,
         })
     }
 
@@ -292,6 +298,19 @@ impl Backend for OpenAICompatBackend {
         let mut transcript = Vec::new();
         self.emit(&format!("contacting {}…", self.model));
         for step in 0..self.max_steps {
+            if let Some(gate) = &mut self.on_gate {
+                match gate() {
+                    Ok(None) => {}
+                    Ok(Some(inject)) => {
+                        self.emit("prompt revised by human — injecting into the next round");
+                        messages.push(json!({"role": "user", "content": inject}));
+                    }
+                    Err(stop) => {
+                        self.emit(&stop);
+                        return Err(stop);
+                    }
+                }
+            }
             self.emit(&format!("step {}: waiting on the model…", step + 1));
             let payload = json!({
                 "model": self.model,

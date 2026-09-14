@@ -1,3 +1,4 @@
+use crate::api::system_for;
 use crate::config::init_workspace;
 use crate::jobs::{Job, JobKind, JobQueue, JobStatus};
 use crate::ledger::Ledger;
@@ -7,6 +8,15 @@ use crate::roles::run_role;
 use crate::spec::load_specs;
 use crate::OpenAICompatBackend;
 use std::path::PathBuf;
+use std::time::Duration;
+
+pub fn author_user_prompt(request: &str) -> String {
+    format!("Translate this request into Gherkin feature files under spec/.\n\nREQUEST:\n{request}\n")
+}
+
+pub fn author_system_prompt() -> &'static str {
+    system_for("author")
+}
 
 pub struct ComposeRequest {
     pub prompt: String,
@@ -70,15 +80,49 @@ pub fn execute_author(job_id: &str) -> Result<String, String> {
         None,
     )?;
     let jid = job_id.to_string();
+    let jid_prog = jid.clone();
     backend.on_progress = Some(Box::new(move |line: &str| {
         let mut q = JobQueue::load();
-        q.append(&jid, line);
+        q.append(&jid_prog, line);
         let _ = q.save();
     }));
-    let prompt = format!(
-        "Translate this request into Gherkin feature files under spec/.\n\nREQUEST:\n{}\n",
-        job.prompt
-    );
+    let mut last_prompt = job.prompt.clone();
+    let mut announced_pause = false;
+    let jid_gate = jid.clone();
+    backend.on_gate = Some(Box::new(move || {
+        loop {
+            let q = JobQueue::load();
+            let Some(j) = q.get(&jid_gate) else {
+                return Err("job disappeared".into());
+            };
+            match j.status {
+                JobStatus::Paused => {
+                    if !announced_pause {
+                        let mut q = JobQueue::load();
+                        q.append(&jid_gate, "paused — waiting for resume");
+                        let _ = q.save();
+                        announced_pause = true;
+                    }
+                    std::thread::sleep(Duration::from_millis(250));
+                }
+                JobStatus::Interrupted | JobStatus::Failed | JobStatus::Done => {
+                    return Err(format!("stopped ({:?})", j.status));
+                }
+                JobStatus::Running | JobStatus::Pending => {
+                    announced_pause = false;
+                    if j.prompt != last_prompt {
+                        last_prompt = j.prompt.clone();
+                        return Ok(Some(format!(
+                            "The human revised the request. Follow this version now:\n\n{}",
+                            last_prompt
+                        )));
+                    }
+                    return Ok(None);
+                }
+            }
+        }
+    }));
+    let prompt = author_user_prompt(&job.prompt);
     let result = run_role(&root, "author", &prompt, &mut backend, false);
     let mut q = JobQueue::load();
     match result {
@@ -98,10 +142,16 @@ pub fn execute_author(job_id: &str) -> Result<String, String> {
             Ok(summary)
         }
         Err(e) => {
-            q.append(job_id, &format!("failed: {e}"));
-            q.set_status(job_id, JobStatus::Failed);
+            let stopped = e.to_string();
+            q.append(job_id, &format!("failed: {stopped}"));
+            let status = if stopped.contains("stopped") {
+                JobStatus::Interrupted
+            } else {
+                JobStatus::Failed
+            };
+            q.set_status(job_id, status);
             let _ = q.save();
-            Err(e.to_string())
+            Err(stopped)
         }
     }
 }

@@ -109,6 +109,9 @@ enum JobCmd {
         #[arg(long)]
         project: String,
     },
+    Show { id: String },
+    Pause { id: String },
+    Resume { id: String },
 }
 
 fn backend(cli: &Cli) -> Result<Box<dyn Backend>, i32> {
@@ -469,6 +472,48 @@ fn run(cli: Cli) -> Result<i32, i32> {
                 for j in q.jobs {
                     println!("  {}  {:?}  {}  {:?}", j.id, j.kind, j.project_id, j.status);
                 }
+                Ok(0)
+            }
+            JobCmd::Show { id } => {
+                let q = JobQueue::load();
+                match q.get(id) {
+                    Some(j) => {
+                        println!("{}  {:?}  {}", j.id, j.status, j.project_id);
+                        println!("model  {} / {}", j.backend, j.model);
+                        println!("--- prompt ---");
+                        println!("{}", shalt_core::author_user_prompt(&j.prompt));
+                        println!("--- log ---");
+                        print!("{}", j.log);
+                        Ok(0)
+                    }
+                    None => {
+                        eprintln!("no job {id}");
+                        Ok(1)
+                    }
+                }
+            }
+            JobCmd::Pause { id } => {
+                let mut q = JobQueue::load();
+                if q.get(id).is_none() {
+                    eprintln!("no job {id}");
+                    return Ok(1);
+                }
+                q.set_status(id, shalt_core::jobs::JobStatus::Paused);
+                q.append(id, "pause requested");
+                q.save().ok();
+                println!("paused {id}");
+                Ok(0)
+            }
+            JobCmd::Resume { id } => {
+                let mut q = JobQueue::load();
+                if q.get(id).is_none() {
+                    eprintln!("no job {id}");
+                    return Ok(1);
+                }
+                q.set_status(id, shalt_core::jobs::JobStatus::Running);
+                q.append(id, "resume");
+                q.save().ok();
+                println!("resumed {id} (if no worker is attached, re-run from the UI)");
                 Ok(0)
             }
             JobCmd::Add { kind, project } => {

@@ -18,7 +18,7 @@ pub mod spec;
 pub mod viz;
 
 pub use api::{list_models, ModelChoice, OpenAICompatBackend};
-pub use compose::{execute_author, start_project, ComposeRequest};
+pub use compose::{author_system_prompt, author_user_prompt, execute_author, start_project, ComposeRequest};
 pub use backends::{Backend, FixtureBackend};
 pub use board::Board;
 pub use config::Config;

@@ -22,6 +22,7 @@ pub enum JobKind {
 pub enum JobStatus {
     Pending,
     Running,
+    Paused,
     Done,
     Failed,
     Interrupted,
@@ -148,11 +149,28 @@ impl JobQueue {
         }
     }
 
-    pub fn interrupt_running(&mut self) {
+    pub fn get(&self, id: &str) -> Option<&Job> {
+        self.jobs.iter().find(|j| j.id == id)
+    }
+
+    pub fn set_prompt(&mut self, id: &str, prompt: &str) -> bool {
+        if let Some(j) = self.jobs.iter_mut().find(|j| j.id == id) {
+            j.prompt = prompt.to_string();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn interrupt_orphans(&mut self) {
         for j in &mut self.jobs {
             if j.status == JobStatus::Running {
                 j.status = JobStatus::Interrupted;
             }
         }
+    }
+
+    pub fn interrupt_running(&mut self) {
+        self.interrupt_orphans();
     }
 }

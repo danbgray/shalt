@@ -141,7 +141,10 @@ async function renderOrg(){
       <div class="mono">${p.green}/${p.total} upheld</div>
     </div>`).join('')}
     <div class="card"><div class="row"><strong>Jobs</strong></div>
-      <table>${(jobs.jobs||[]).map(j => `<tr><td class="mono">${esc(j.id)}</td><td>${esc(j.kind)}</td><td>${esc(j.project_id)}</td><td class="status">${esc(j.status)}</td></tr>`).join('')}</table>
+      <table>${(jobs.jobs||[]).map(j => `<tr>
+        <td class="mono"><a href="#" onclick="renderJob('${esc(j.id)}');return false;" style="color:inherit">${esc(j.id)}</a></td>
+        <td>${esc(j.kind)}</td><td>${esc(j.project_id)}</td>
+        <td class="status">${esc(j.status)}</td></tr>`).join('')}</table>
     </div>`;
   if (running.length) pollJobs();
 }
@@ -163,8 +166,7 @@ async function submitCompose(ev){
       body: JSON.stringify({ prompt, backend, model })
     });
     logEl.textContent += 'authoring ' + res.project.id + '…\n';
-    await waitForJob(res.job.id);
-    renderProject(res.project.id);
+    await renderJob(res.job.id);
   } catch (e) {
     logEl.className = 'transcript err';
     logEl.textContent = (logEl.textContent || '') + '\n' + (e.message || String(e));
@@ -173,22 +175,73 @@ async function submitCompose(ev){
   return false;
 }
 
-async function waitForJob(id){
-  for (let i=0; i<600; i++){
-    const q = await api('/api/jobs');
-    const j = (q.jobs||[]).find(x => x.id === id);
-    const logEl = document.getElementById('compose-log');
-    if (logEl && j) {
-      logEl.textContent = j.log || (j.status + '…');
-      logEl.scrollTop = logEl.scrollHeight;
-    }
-    if (j && (j.status === 'done' || j.status === 'failed' || j.status === 'interrupted')) {
-      if (j.status !== 'done') throw new Error(j.log || j.status);
-      return j;
-    }
+async function jobAction(id, action, prompt){
+  return api('/api/jobs/'+id, {
+    method:'POST',
+    headers:{'content-type':'application/json'},
+    body: JSON.stringify({ action, prompt })
+  });
+}
+
+function jobButtons(j){
+  const canPause = j.status === 'running';
+  const canResume = j.status === 'paused' || j.status === 'interrupted';
+  return `${canPause ? `<button type="button" id="btn-pause">Pause</button>` : ''}
+          ${canResume ? `<button type="button" id="btn-resume">Resume</button>` : ''}
+          <button type="button" id="btn-save">Save prompt</button>`;
+}
+
+async function renderJob(id){
+  const data0 = await api('/api/jobs/'+id);
+  const j0 = data0.job;
+  document.getElementById('main').innerHTML = `
+    <p class="mono"><a href="#" onclick="renderOrg();return false;" style="color:inherit">← dashboard</a>
+      · <a href="#" onclick="renderProject('${esc(j0.project_id)}');return false;" style="color:inherit">${esc(j0.project_id)}</a></p>
+    <h2>Job ${esc(j0.id)}</h2>
+    <p class="mono" id="job-meta">${esc(j0.kind)} · <span id="job-status">${esc(j0.status)}</span> · ${esc(j0.backend)} ${esc(j0.model)}</p>
+    <div class="card">
+      <div class="row"><strong>Exact prompt</strong><span id="job-actions">${jobButtons(j0)}</span></div>
+      <p class="mono" style="margin:8px 0 4px">system</p>
+      <pre class="transcript" style="max-height:8rem">${esc(data0.system)}</pre>
+      <p class="mono" style="margin:12px 0 4px">user — edit and save; a running or paused job picks it up on the next model round</p>
+      <textarea id="job-prompt" style="width:100%;min-height:8rem;font:1rem/1.45 Iowan Old Style, Palatino, serif;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:10px">${esc(j0.prompt)}</textarea>
+    </div>
+    <pre id="compose-log" class="transcript" aria-live="polite">${esc(j0.log)}</pre>
+    <p id="job-done"></p>
+  `;
+  const bind = (j) => {
+    const pause = document.getElementById('btn-pause');
+    const resume = document.getElementById('btn-resume');
+    const save = document.getElementById('btn-save');
+    if (pause) pause.onclick = () => jobAction(id,'pause');
+    if (resume) resume.onclick = () => jobAction(id,'resume');
+    if (save) save.onclick = () => savePrompt(id);
+    const done = document.getElementById('job-done');
+    if (done) done.innerHTML = j.status === 'done'
+      ? `<button type="button" onclick="renderProject('${esc(j.project_id)}')">Open project</button>` : '';
+  };
+  bind(j0);
+  let j = j0;
+  let active = j.status === 'running' || j.status === 'paused' || j.status === 'pending';
+  while (active) {
     await new Promise(r => setTimeout(r, 400));
+    if (!document.querySelector('h2') || !document.querySelector('h2').textContent.includes(id)) return j;
+    const data = await api('/api/jobs/'+id);
+    j = data.job;
+    const st = document.getElementById('job-status');
+    if (st) st.textContent = j.status;
+    const actions = document.getElementById('job-actions');
+    if (actions) { actions.innerHTML = jobButtons(j); bind(j); }
+    const logEl = document.getElementById('compose-log');
+    if (logEl) { logEl.textContent = j.log || ''; logEl.scrollTop = logEl.scrollHeight; }
+    active = j.status === 'running' || j.status === 'paused' || j.status === 'pending';
   }
-  throw new Error('timed out waiting for the author');
+  return j;
+}
+
+async function savePrompt(id){
+  const el = document.getElementById('job-prompt');
+  await jobAction(id, 'save', el.value);
 }
 
 function pollJobs(){ setTimeout(() => { if (document.querySelector('h2')?.textContent?.includes('shall')) renderOrg(); }, 4000); }
