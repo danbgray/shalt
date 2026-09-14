@@ -300,8 +300,8 @@ green and green expires when the spec moves.
 ## Commands
 
 ```
-shall <sentence>                 English → spec, y/n each scenario, then tests
-shall --yes <sentence>           accept every scenario, then tests
+shall <sentence>                 clarify if needed, then spec, y/n each scenario, then tests
+shall --yes <sentence>           no questions; accept every scenario; then tests
 shalt init [--stack NAME]        scaffold a workspace
 shalt author "<request>"         English → Gherkin under spec/ (long form)
 shalt approve --yes --by <you>   re-lock hashes after you edit the spec

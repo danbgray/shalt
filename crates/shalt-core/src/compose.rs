@@ -96,6 +96,9 @@ pub fn execute_author(job_id: &str) -> Result<String, String> {
                 return Err("job disappeared".into());
             };
             match j.status {
+                JobStatus::Waiting => {
+                    std::thread::sleep(Duration::from_millis(250));
+                }
                 JobStatus::Paused => {
                     if !announced_pause {
                         let mut q = JobQueue::load();
@@ -118,6 +121,32 @@ pub fn execute_author(job_id: &str) -> Result<String, String> {
                         )));
                     }
                     return Ok(None);
+                }
+            }
+        }
+    }));
+    let jid_ask = jid.clone();
+    backend.on_ask = Some(Box::new(move |question: &str| {
+        let mut q = JobQueue::load();
+        q.ask(&jid_ask, question);
+        q.append(&jid_ask, &format!("? {question}"));
+        let _ = q.save();
+        loop {
+            std::thread::sleep(Duration::from_millis(250));
+            let mut q = JobQueue::load();
+            let Some(j) = q.get(&jid_ask).cloned() else {
+                return Err("job disappeared".into());
+            };
+            match j.status {
+                JobStatus::Interrupted | JobStatus::Failed | JobStatus::Done => {
+                    return Err(format!("stopped ({:?})", j.status));
+                }
+                _ => {
+                    if let Some(a) = q.take_answer(&jid_ask) {
+                        q.append(&jid_ask, &format!("  you: {a}"));
+                        let _ = q.save();
+                        return Ok(a);
+                    }
                 }
             }
         }

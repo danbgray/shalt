@@ -23,6 +23,7 @@ pub enum JobStatus {
     Pending,
     Running,
     Paused,
+    Waiting,
     Done,
     Failed,
     Interrupted,
@@ -44,6 +45,10 @@ pub struct Job {
     pub backend: String,
     #[serde(default)]
     pub model: String,
+    #[serde(default)]
+    pub question: String,
+    #[serde(default)]
+    pub answer: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -110,6 +115,8 @@ impl JobQueue {
             prompt: prompt.into(),
             backend: backend.into(),
             model: model.into(),
+            question: String::new(),
+            answer: String::new(),
         };
         self.jobs.push(job.clone());
         job
@@ -151,6 +158,38 @@ impl JobQueue {
 
     pub fn get(&self, id: &str) -> Option<&Job> {
         self.jobs.iter().find(|j| j.id == id)
+    }
+
+    pub fn ask(&mut self, id: &str, question: &str) -> bool {
+        if let Some(j) = self.jobs.iter_mut().find(|j| j.id == id) {
+            j.status = JobStatus::Waiting;
+            j.question = question.to_string();
+            j.answer.clear();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn take_answer(&mut self, id: &str) -> Option<String> {
+        let j = self.jobs.iter_mut().find(|j| j.id == id)?;
+        if j.answer.is_empty() {
+            return None;
+        }
+        let a = std::mem::take(&mut j.answer);
+        j.question.clear();
+        j.status = JobStatus::Running;
+        Some(a)
+    }
+
+    pub fn set_answer(&mut self, id: &str, answer: &str) -> bool {
+        if let Some(j) = self.jobs.iter_mut().find(|j| j.id == id) {
+            j.answer = answer.to_string();
+            j.status = JobStatus::Running;
+            true
+        } else {
+            false
+        }
     }
 
     pub fn set_prompt(&mut self, id: &str, prompt: &str) -> bool {

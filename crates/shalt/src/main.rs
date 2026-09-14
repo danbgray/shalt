@@ -809,6 +809,22 @@ fn live_backend(cli: &Cli) -> Result<OpenAICompatBackend, i32> {
     })?;
     eprintln!("using {preset} / {}", b.model);
     b.on_progress = Some(Box::new(|line| eprintln!("{line}")));
+    if !cli.yes && io::stdin().is_terminal() {
+        b.on_ask = Some(Box::new(|question: &str| {
+            loop {
+                println!("\n? {question}");
+                print!("> ");
+                let _ = io::stdout().flush();
+                let mut line = String::new();
+                io::stdin().lock().read_line(&mut line).map_err(|e| e.to_string())?;
+                let a = line.trim().to_string();
+                if !a.is_empty() {
+                    return Ok(a);
+                }
+                eprintln!("  type an answer (or --yes next time to skip questions)");
+            }
+        }));
+    }
     Ok(b)
 }
 

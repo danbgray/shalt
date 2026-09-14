@@ -656,6 +656,22 @@ fn ui_registry_prunes_dead_pids() {
 }
 
 #[test]
+fn job_ask_waits_for_an_answer() {
+    let t = TempDir::new().unwrap();
+    let path = t.path().join("jobs.json");
+    let mut q = JobQueue::default();
+    let job = q.enqueue_full(JobKind::Author, "invoice", "do billing", "qwen", "qwen3.5:2b");
+    q.ask(&job.id, "Which currency?");
+    q.save_to(&path).unwrap();
+    let mut q2 = JobQueue::load_from(&path);
+    assert_eq!(q2.jobs[0].status, JobStatus::Waiting);
+    assert!(q2.take_answer(&job.id).is_none());
+    q2.set_answer(&job.id, "USD");
+    assert_eq!(q2.take_answer(&job.id).as_deref(), Some("USD"));
+    assert_eq!(q2.jobs[0].status, JobStatus::Running);
+}
+
+#[test]
 fn job_pause_and_prompt_edit() {
     let t = TempDir::new().unwrap();
     let path = t.path().join("jobs.json");

@@ -175,11 +175,11 @@ async function submitCompose(ev){
   return false;
 }
 
-async function jobAction(id, action, prompt){
+async function jobAction(id, action, prompt, answer){
   return api('/api/jobs/'+id, {
     method:'POST',
     headers:{'content-type':'application/json'},
-    body: JSON.stringify({ action, prompt })
+    body: JSON.stringify({ action, prompt, answer })
   });
 }
 
@@ -206,6 +206,14 @@ async function renderJob(id){
       <p class="mono" style="margin:12px 0 4px">user — edit and save; a running or paused job picks it up on the next model round</p>
       <textarea id="job-prompt" style="width:100%;min-height:8rem;font:1rem/1.45 Iowan Old Style, Palatino, serif;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:10px">${esc(j0.prompt)}</textarea>
     </div>
+    <div id="job-ask" class="card" style="display:${j0.status==='waiting'?'block':'none'}">
+      <strong>The model has a question</strong>
+      <p id="job-ask-q" style="margin:8px 0">${esc(j0.question||'')}</p>
+      <div class="compose-bar">
+        <input id="job-ask-a" style="flex:1;font:1rem/1.4 Iowan Old Style, Palatino, serif;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:8px 10px" placeholder="Your answer"/>
+        <button type="button" id="btn-answer">Answer</button>
+      </div>
+    </div>
     <pre id="compose-log" class="transcript" aria-live="polite">${esc(j0.log)}</pre>
     <p id="job-done"></p>
   `;
@@ -216,13 +224,18 @@ async function renderJob(id){
     if (pause) pause.onclick = () => jobAction(id,'pause');
     if (resume) resume.onclick = () => jobAction(id,'resume');
     if (save) save.onclick = () => savePrompt(id);
+    const ans = document.getElementById('btn-answer');
+    if (ans) ans.onclick = () => {
+      const v = document.getElementById('job-ask-a').value.trim();
+      if (v) jobAction(id, 'answer', undefined, v);
+    };
     const done = document.getElementById('job-done');
     if (done) done.innerHTML = j.status === 'done'
       ? `<button type="button" onclick="renderProject('${esc(j.project_id)}')">Open project</button>` : '';
   };
   bind(j0);
   let j = j0;
-  let active = j.status === 'running' || j.status === 'paused' || j.status === 'pending';
+  let active = ['running','paused','pending','waiting'].includes(j.status);
   while (active) {
     await new Promise(r => setTimeout(r, 400));
     if (!document.querySelector('h2') || !document.querySelector('h2').textContent.includes(id)) return j;
@@ -232,9 +245,14 @@ async function renderJob(id){
     if (st) st.textContent = j.status;
     const actions = document.getElementById('job-actions');
     if (actions) { actions.innerHTML = jobButtons(j); bind(j); }
+    const ask = document.getElementById('job-ask');
+    const askq = document.getElementById('job-ask-q');
+    const aska = document.getElementById('job-ask-a');
+    if (ask) ask.style.display = j.status === 'waiting' ? 'block' : 'none';
+    if (askq && j.question && document.activeElement !== aska) askq.textContent = j.question;
     const logEl = document.getElementById('compose-log');
     if (logEl) { logEl.textContent = j.log || ''; logEl.scrollTop = logEl.scrollHeight; }
-    active = j.status === 'running' || j.status === 'paused' || j.status === 'pending';
+    active = ['running','paused','pending','waiting'].includes(j.status);
   }
   return j;
 }

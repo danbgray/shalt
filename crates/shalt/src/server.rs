@@ -263,6 +263,8 @@ struct JobAction {
     action: String,
     #[serde(default)]
     prompt: Option<String>,
+    #[serde(default)]
+    answer: Option<String>,
 }
 
 async fn api_job_action(
@@ -291,6 +293,19 @@ async fn api_job_action(
                 drop(q.save());
                 spawn_author(&app, id.clone());
             }
+        }
+        "answer" => {
+            let a = body
+                .answer
+                .as_deref()
+                .or(body.prompt.as_deref())
+                .unwrap_or("")
+                .trim();
+            if a.is_empty() {
+                return (axum::http::StatusCode::BAD_REQUEST, "answer is empty").into_response();
+            }
+            q.set_answer(&id, a);
+            q.append(&id, &format!("  you: {a}"));
         }
         "save" | "" => {}
         other => {

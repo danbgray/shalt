@@ -12,9 +12,10 @@ use std::time::Duration;
 
 const MAX_READ: usize = 60_000;
 const MAX_WRITE: usize = 400_000;
+pub const ASSUME_REPLY: &str = "The human is not taking questions this turn. Make a reasonable assumption, write it into the scenario as a concrete example, and continue.";
 
 pub const ROLE_SYSTEM: &[(&str, &str)] = &[
-    ("author", "You are the SPEC AUTHOR in a BDD pipeline. You translate a plain-English request into Gherkin feature files under spec/. Write scenarios that a non-engineer stakeholder could read and approve. One behaviour per scenario. Prefer concrete example values over vague wording. Do not write code, tests, or step definitions. Only create files under spec/."),
+    ("author", "You are the SPEC AUTHOR in a BDD pipeline. You translate a plain-English request into Gherkin feature files under spec/. If anything needed to write *concrete* scenarios is missing or ambiguous (who the user is, currency, rounding, error cases, what is in or out of scope), call ask_human *before* write_file. Ask one question at a time. Do not invent business rules you could have asked about. Once you know enough, write scenarios a non-engineer could approve: one behaviour per scenario, concrete example values. Do not write code, tests, or step definitions. Only create files under spec/."),
     ("stepwright", "You are the STEPWRIGHT in a BDD pipeline. You see the approved Gherkin spec and NOTHING of the implementation -- that is deliberate. Write pytest-bdd step definitions under steps/ that bind each scenario to the behaviour it describes, and declare the public API surface you call in contract/interface.md. Import only from that declared surface. Never weaken an assertion to make it easier to satisfy; you are the oracle, not the builder. Only create files under steps/ and contract/."),
     ("implementer", "You are the IMPLEMENTER in a BDD pipeline. You see the spec, the interface contract, and the failing test output -- you do NOT see the step definitions, and you cannot edit them. Write code under src/ that satisfies the specified behaviour against the contract. Do not special-case test inputs or hard-code expected outputs; implement the behaviour. Only create files under src/."),
 ];
@@ -134,7 +135,8 @@ fn tools_json() -> Value {
         {"type":"function","function":{"name":"list_files","description":"List every file you can see, with its size in bytes.","parameters":{"type":"object","properties":{},"required":[]}}},
         {"type":"function","function":{"name":"read_file","description":"Read one file.","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}},
         {"type":"function","function":{"name":"write_file","description":"Create or overwrite one file with the complete content.","parameters":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}}},
-        {"type":"function","function":{"name":"done","description":"Call this when the work is complete.","parameters":{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"]}}}
+        {"type":"function","function":{"name":"done","description":"Call this when the work is complete.","parameters":{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"]}}},
+        {"type":"function","function":{"name":"ask_human","description":"Ask the human one clarifying question. Use this when the request is too vague to write a concrete scenario.","parameters":{"type":"object","properties":{"question":{"type":"string","description":"One question, in plain language."}},"required":["question"]}}}
     ])
 }
 
@@ -149,6 +151,8 @@ pub struct OpenAICompatBackend {
     /// Called before each model round. `None` = continue, `Some(text)` = inject a user
     /// message then continue, `Err` = stop the turn.
     pub on_gate: Option<Box<dyn FnMut() -> Result<Option<String>, String> + Send>>,
+    /// Clarifying questions. If unset, the model is told to assume.
+    pub on_ask: Option<Box<dyn FnMut(&str) -> Result<String, String> + Send>>,
 }
 
 
@@ -182,6 +186,7 @@ impl OpenAICompatBackend {
             timeout_secs: 180,
             on_progress: None,
             on_gate: None,
+            on_ask: None,
         })
     }
 
@@ -366,6 +371,25 @@ impl Backend for OpenAICompatBackend {
                 };
                 let result = if fn_obj.get("arguments").and_then(|a| a.as_str()).map(|s| serde_json::from_str::<Value>(s).is_err()).unwrap_or(false) {
                     "ERROR: arguments were not valid JSON".into()
+                } else if fname == "ask_human" {
+                    let q = args.get("question").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+                    if q.is_empty() {
+                        "ERROR: question is required".into()
+                    } else {
+                        self.emit(&format!("? {q}"));
+                        let replied = if let Some(cb) = &mut self.on_ask {
+                            cb(&q)
+                        } else {
+                            Ok(ASSUME_REPLY.to_string())
+                        };
+                        match replied {
+                            Ok(a) => {
+                                self.emit(&format!("  you: {a}"));
+                                a
+                            }
+                            Err(e) => return Err(e),
+                        }
+                    }
                 } else {
                     dispatch(stage, fname, &args)
                 };
