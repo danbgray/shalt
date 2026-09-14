@@ -237,6 +237,13 @@ pub struct ModelChoice {
     pub kind: String,
 }
 
+pub fn ollama_reachable() -> bool {
+    ureq::get("http://127.0.0.1:11434/v1/models")
+        .timeout(Duration::from_secs(1))
+        .call()
+        .is_ok()
+}
+
 pub fn list_models() -> Vec<ModelChoice> {
     let mut out = Vec::new();
     if std::env::var("XAI_API_KEY").map(|s| !s.is_empty()).unwrap_or(false) {

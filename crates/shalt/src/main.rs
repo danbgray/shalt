@@ -7,10 +7,19 @@ use shalt_core::jobs::{JobKind, JobQueue};
 use shalt_core::ledger::{Ledger, GREEN, ORPHAN, PENDING, RED, STALE};
 use shalt_core::org::Org;
 use shalt_core::roles::run_role;
-use shalt_core::runner::{harness_report, run_suite};
+use shalt_core::runner::run_suite;
 use shalt_core::spec::{holdout_rids, load_specs, stamp_rids};
-use shalt_core::{Backend, RoleError};
+use shalt_core::{author_user_prompt, Backend, OpenAICompatBackend, RoleError};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+
+const COMMANDS: &[&str] = &[
+    "init", "author", "approve", "steps", "build", "run", "status", "verify", "tree",
+    "stories", "org", "board", "job", "ui", "diagrams", "dashboard", "mutate", "do", "help",
+];
+const VALUE_FLAGS: &[&str] = &[
+    "--root", "--backend", "--fixtures", "--model", "--base-url", "--port",
+];
 
 #[derive(Parser)]
 #[command(name = "shalt", version, about = "English → Gherkin → tests → code, with a spec-bound ledger")]
@@ -25,6 +34,11 @@ struct Cli {
     model: Option<String>,
     #[arg(long)]
     base_url: Option<String>,
+    /// After authoring, approve the spec and write tests (for `shall <sentence>` / `shalt do`)
+    #[arg(long, short = 'y', global = true)]
+    yes: bool,
+    #[arg(long, global = true, default_value = "local")]
+    by: String,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -38,12 +52,7 @@ enum Cmd {
         name: String,
     },
     Author { request: String },
-    Approve {
-        #[arg(long)]
-        yes: bool,
-        #[arg(long, default_value = "local")]
-        by: String,
-    },
+    Approve,
     Steps,
     Build {
         #[arg(long, default_value_t = 6)]
@@ -88,6 +97,11 @@ enum Cmd {
         budget: usize,
         #[arg(long, default_value_t = 0)]
         seed: u64,
+    },
+    /// English sentence → spec (and with --yes, approve + tests)
+    Do {
+        #[arg(trailing_var_arg = true, required = true, allow_hyphen_values = true)]
+        sentence: Vec<String>,
     },
 }
 
@@ -174,8 +188,45 @@ fn sync(root: &Path) -> Result<(Ledger, Vec<shalt_core::Feature>), i32> {
     Ok((led, features))
 }
 
+fn inject_do(mut args: Vec<OsString>) -> Vec<OsString> {
+    let mut i = 1usize;
+    while i < args.len() {
+        let s = args[i].to_string_lossy();
+        if s == "--" {
+            i += 1;
+            break;
+        }
+        if s.starts_with('-') {
+            if VALUE_FLAGS.iter().any(|f| *f == s) {
+                i += 2;
+            } else {
+                i += 1;
+            }
+            continue;
+        }
+        break;
+    }
+    let pos = args.get(i).and_then(|a| a.to_str()).unwrap_or("");
+    if pos.is_empty() || COMMANDS.contains(&pos) {
+        return args;
+    }
+    args.insert(i, "do".into());
+    args
+}
+
 fn main() {
-    let cli = Cli::parse();
+    let args: Vec<OsString> = inject_do(std::env::args_os().collect());
+    if args.len() == 1 {
+        let stem = Path::new(&args[0])
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("shalt");
+        if stem == "shall" {
+            eprintln!("shall <what the system shall do>\n  English → Gherkin spec.  --yes also approves and writes tests.");
+            std::process::exit(2);
+        }
+    }
+    let cli = Cli::parse_from(args);
     let code = match run(cli) {
         Ok(c) => c,
         Err(c) => c,
@@ -213,6 +264,7 @@ fn run(cli: Cli) -> Result<i32, i32> {
             println!("initialised shalt workspace at {}  ({})", root.display(), preset.label);
             Ok(0)
         }
+        Cmd::Do { sentence } => cmd_specify(&cli, &root, &sentence.join(" ")),
         Cmd::Author { request } => {
             let mut b = backend(&cli)?;
             let prompt = format!(
@@ -238,7 +290,9 @@ fn run(cli: Cli) -> Result<i32, i32> {
                 }
             }
         }
-        Cmd::Approve { yes, by } => {
+        Cmd::Approve => {
+            let yes = cli.yes;
+            let by = &cli.by;
             if !yes {
                 eprintln!("refusing without --yes in this build (non-interactive)");
                 return Ok(1);
@@ -301,7 +355,7 @@ fn run(cli: Cli) -> Result<i32, i32> {
             let run = run_suite(&root, &cfg);
             if run.harness_error {
                 eprintln!("the test harness failed to run");
-                eprintln!("{}", harness_report(&run));
+                eprintln!("{}\n{}", run.stderr, run.stdout);
                 return Ok(3);
             }
             let out = led.apply_run(&run.results, &run.run_id, &run.collection_error);
@@ -330,7 +384,7 @@ fn run(cli: Cli) -> Result<i32, i32> {
                 let run = run_suite(&root, &cfg);
                 if run.harness_error {
                     eprintln!("turn {turn}: the test harness failed to run");
-                    eprintln!("{}", harness_report(&run));
+                    eprintln!("{}\n{}", run.stderr, run.stdout);
                     return Ok(3);
                 }
                 led.apply_run(&run.results, &format!("turn{turn}"), &run.collection_error);
@@ -735,6 +789,140 @@ fn cmd_ui_stop() -> Result<i32, i32> {
     }
 }
 
+fn live_backend(cli: &Cli) -> Result<OpenAICompatBackend, i32> {
+    let ollama_up = shalt_core::api::ollama_reachable();
+    let grok = std::env::var("XAI_API_KEY").map(|s| !s.is_empty()).unwrap_or(false);
+    let preset = if cli.backend != "fixture" {
+        cli.backend.as_str()
+    } else if ollama_up {
+        "qwen"
+    } else if grok {
+        "grok"
+    } else {
+        eprintln!("no model available: start Ollama with a Qwen model, set XAI_API_KEY, or pass --backend grok|qwen");
+        return Err(1);
+    };
+    let mut b = OpenAICompatBackend::from_preset(preset, cli.model.as_deref(), cli.base_url.as_deref()).map_err(|e| {
+        eprintln!("{e}");
+        1
+    })?;
+    eprintln!("using {preset} / {}", b.model);
+    b.on_progress = Some(Box::new(|line| eprintln!("{line}")));
+    Ok(b)
+}
+
+fn cmd_specify(cli: &Cli, root: &Path, sentence: &str) -> Result<i32, i32> {
+    let sentence = sentence.trim();
+    if sentence.is_empty() {
+        eprintln!("shall <what the system shall do>");
+        return Err(2);
+    }
+    if !root.join("shalt.toml").exists() {
+        let name = root
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "project".into());
+        shalt_core::config::init_workspace(root, "python", &name).map_err(|e| {
+            eprintln!("{e}");
+            1
+        })?;
+        println!("initialised workspace at {}", root.display());
+    }
+    let mut b = live_backend(cli)?;
+    println!("authoring spec…");
+    match run_role(root, "author", &author_user_prompt(sentence), &mut b, false) {
+        Ok(res) => {
+            println!("author wrote {} file(s):", res.wrote.len());
+            for w in &res.wrote {
+                println!("  {w}");
+            }
+        }
+        Err(RoleError::Integrity(e)) => {
+            eprintln!("turn rejected: {e}");
+            return Ok(2);
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            return Ok(1);
+        }
+    }
+    let _ = sync(root);
+    if let Ok(rd) = std::fs::read_dir(root.join("spec")) {
+        for e in rd.flatten() {
+            if e.path().extension().and_then(|s| s.to_str()) == Some("feature") {
+                println!("\n----- {} -----", e.path().display());
+                if let Ok(text) = std::fs::read_to_string(e.path()) {
+                    print!("{text}");
+                }
+            }
+        }
+    }
+    if !cli.yes {
+        println!("\nReview spec/, then:\n  shalt --yes approve\n  shalt steps");
+        println!("Or: shall --yes \"{sentence}\"");
+        return Ok(0);
+    }
+    let by = if cli.by == "local" {
+        std::env::var("USER").unwrap_or_else(|_| "local".into())
+    } else {
+        cli.by.clone()
+    };
+    let features = load_specs(&root.join("spec"), true).map_err(|e| {
+        eprintln!("{}", e.message());
+        4
+    })?;
+    if features.is_empty() {
+        eprintln!("author wrote no feature files");
+        return Ok(1);
+    }
+    stamp_rids(&root.join("spec")).map_err(|e| {
+        eprintln!("{e}");
+        1
+    })?;
+    let (mut led, features) = sync(root)?;
+    let hashes: serde_json::Map<String, serde_json::Value> = features
+        .iter()
+        .flat_map(|f| f.scenarios.iter().map(move |s| (f, s)))
+        .filter_map(|(f, s)| {
+            s.rid.as_ref().map(|r| (r.clone(), serde_json::Value::String(s.spec_hash(&f.background))))
+        })
+        .collect();
+    led.spec_lock = serde_json::json!({
+        "approved_by": by,
+        "approved_at": chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+        "scenario_count": features.iter().map(|f| f.scenarios.len()).sum::<usize>(),
+        "scenario_hashes": hashes,
+    });
+    led.save(&ledger_path(root)).ok();
+    println!("approved by {by}");
+    println!("writing tests…");
+    let mut b = live_backend(cli)?;
+    match run_role(
+        root,
+        "stepwright",
+        "Write step definitions under steps/ and contract/interface.md",
+        &mut b,
+        false,
+    ) {
+        Ok(res) => {
+            println!("stepwright wrote {} file(s):", res.wrote.len());
+            for w in res.wrote {
+                println!("  {w}");
+            }
+            println!("\nNext: shalt --backend {} build", cli.backend);
+            Ok(0)
+        }
+        Err(RoleError::Integrity(e)) => {
+            eprintln!("turn rejected: {e}");
+            Ok(2)
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            Ok(1)
+        }
+    }
+}
+
 fn status_glyph(st: &str) -> &'static str {
     match st {
         GREEN => "+",
@@ -766,3 +954,37 @@ fn bar(green: i64, total: i64) -> String {
 }
 
 mod server;
+
+#[cfg(test)]
+mod arg_tests {
+    use super::*;
+
+    fn s(v: &[&str]) -> Vec<OsString> {
+        v.iter().map(|x| OsString::from(*x)).collect()
+    }
+    fn out(v: Vec<OsString>) -> Vec<String> {
+        v.into_iter().map(|x| x.to_string_lossy().into_owned()).collect()
+    }
+
+    #[test]
+    fn sentence_becomes_do() {
+        assert_eq!(
+            out(inject_do(s(&["shall", "total", "invoices", "exactly"]))),
+            ["shall", "do", "total", "invoices", "exactly"]
+        );
+    }
+
+    #[test]
+    fn known_command_untouched() {
+        assert_eq!(out(inject_do(s(&["shalt", "ui"]))), ["shalt", "ui"]);
+        assert_eq!(out(inject_do(s(&["shall", "status"]))), ["shall", "status"]);
+    }
+
+    #[test]
+    fn flags_then_sentence() {
+        assert_eq!(
+            out(inject_do(s(&["shall", "--backend", "qwen", "total", "invoices"]))),
+            ["shall", "--backend", "qwen", "do", "total", "invoices"]
+        );
+    }
+}

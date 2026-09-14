@@ -31,10 +31,10 @@ discharged.
 ```bash
 cargo test --workspace
 cargo run -p shalt -- --help
-cargo run -p shalt -- ui                    # localhost UI (org → project → board)
-examples/invoice/demo.sh                    # offline fixture loop
-export XAI_API_KEY=...
-cargo run -p shalt -- --backend grok author "what you want built"
+shall total invoices exactly in the customer's currency   # English → spec
+shall --yes total invoices exactly                        # spec + approve + tests
+shalt ui                                                  # same compose box in the browser
+examples/invoice/demo.sh                                  # offline fixture loop
 ```
 
 ---
@@ -300,8 +300,10 @@ green and green expires when the spec moves.
 ## Commands
 
 ```
+shall <sentence>                 English → spec (same as the UI compose box)
+shall --yes <sentence>           then approve and write tests
 shalt init [--stack NAME]        scaffold a workspace
-shalt author "<request>"         English → Gherkin under spec/
+shalt author "<request>"         English → Gherkin under spec/ (long form)
 shalt approve --yes --by <you>   human sign-off; stamps ids, locks the spec
 shalt steps                      stepwright writes steps/ + contract/
 shalt build [--max-turns N]      implementer loop until green, then verify with holdouts
