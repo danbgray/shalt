@@ -3,6 +3,7 @@
 pub mod api;
 pub mod backends;
 pub mod board;
+pub mod compose;
 pub mod config;
 pub mod integrity;
 pub mod jobs;
@@ -16,7 +17,8 @@ pub mod runner;
 pub mod spec;
 pub mod viz;
 
-pub use api::OpenAICompatBackend;
+pub use api::{list_models, ModelChoice, OpenAICompatBackend};
+pub use compose::{execute_author, start_project, ComposeRequest};
 pub use backends::{Backend, FixtureBackend};
 pub use board::Board;
 pub use config::Config;

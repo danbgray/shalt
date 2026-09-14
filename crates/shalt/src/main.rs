@@ -120,7 +120,7 @@ fn backend(cli: &Cli) -> Result<Box<dyn Backend>, i32> {
             })?;
             Ok(Box::new(FixtureBackend::new(dir)))
         }
-        "grok" | "openai" => {
+        "grok" | "openai" | "qwen" | "ollama" => {
             match shalt_core::OpenAICompatBackend::from_preset(
                 &cli.backend,
                 cli.model.as_deref(),

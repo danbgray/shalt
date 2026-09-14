@@ -248,6 +248,29 @@ color = "auto"
     Ok(p)
 }
 
+pub fn init_workspace(root: &Path, stack: &str, name: &str) -> Result<Preset, String> {
+    let preset = write_config(root, stack, name)?;
+    let cfg = Config::load(root).unwrap_or_default();
+    for d in ["spec", "contract", ".shalt"] {
+        std::fs::create_dir_all(root.join(d)).map_err(|e| e.to_string())?;
+    }
+    std::fs::create_dir_all(root.join(&cfg.steps)).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(root.join(&cfg.src)).map_err(|e| e.to_string())?;
+    if stack == "python" {
+        std::fs::write(root.join(&cfg.steps).join("conftest.py"), python_reporter_template())
+            .map_err(|e| e.to_string())?;
+    }
+    std::fs::write(
+        root.join(".shalt/.gitignore"),
+        "stage/\nbackup/\nlast_run.json\nmessages.ndjson\ncucumber.json\n",
+    )
+    .map_err(|e| e.to_string())?;
+    crate::ledger::Ledger::default()
+        .save(&root.join(".shalt/ledger.json"))
+        .map_err(|e| e.to_string())?;
+    Ok(preset)
+}
+
 /// Workspace-local pytest plugin. Binds by pytest-bdd tags (`rid:S-xxxxxxxx`).
 /// Lives in the project so uninstalling shalt does not break `pytest`.
 pub fn python_reporter_template() -> &'static str {

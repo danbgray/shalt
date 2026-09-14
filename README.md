@@ -5,7 +5,7 @@ then Gherkin scenarios you approve as the contract; isolated agents write the te
 implementation, until every scenario passes — recorded in a ledger whose "green" you can
 actually trust.
 
-CLI: `shalt` — a Rust binary. Localhost UI: `shalt ui`. Live models: `--backend grok`.
+CLI: `shalt` — a Rust binary. Localhost UI: `shalt ui`. Models: `--backend grok` or `--backend qwen` (Ollama).
 
 ### Why "Shalt"
 
@@ -217,9 +217,10 @@ EPIC BILLING  7/9 verified
 
 ## UI
 
-`shalt ui` binds `127.0.0.1` (default port 7700) and opens a Linear-shaped view of a local org:
-projects, a dashboard of notch-meters, a board of rids, and a job queue. The CLI can do
-everything the UI can; the UI cannot do anything the CLI cannot.
+`shalt ui` binds `127.0.0.1` (default port 7700). The home screen is a compose box: describe
+the project in English, pick **Grok** or a local **Qwen** (Ollama), and shalt authors Gherkin
+into a new project. The sidebar lists projects; each has a board of rids. The CLI can do
+everything the UI can.
 
 `shalt org add PATH` registers a git workspace. Overlay edits (rank, milestone, sprint) write
 the board; content edits of a story still write Gherkin.
@@ -314,7 +315,8 @@ shalt job add|list               durable job queue
 - `--backend fixture --fixtures <dir>` — replays recorded turns. Offline, deterministic; this
   is what the tests and `examples/invoice/demo.sh` use.
 - `--backend grok` — xAI chat-completions. Needs `XAI_API_KEY`. Default model `grok-4.5`.
-- `--backend openai` — same adapter. Needs `OPENAI_API_KEY`.
+- `--backend qwen` — local Ollama at `http://127.0.0.1:11434/v1`. Default `qwen3.5:35b-128k`. No API key.
+- `--backend openai` — same adapter as Grok. Needs `OPENAI_API_KEY`.
 
 Adding a backend is one type that implements `Backend::run(role, prompt, stage)`.
 

@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub trait Backend {
+pub trait Backend: Send {
     fn name(&self) -> &str;
     fn run(&mut self, role: &str, prompt: &str, stage: &Path) -> Result<String, String>;
 }
@@ -99,7 +99,7 @@ pub struct FnBackend<F> {
 }
 impl<F> Backend for FnBackend<F>
 where
-    F: FnMut(&Path),
+    F: FnMut(&Path) + Send,
 {
     fn name(&self) -> &str {
         "fn"

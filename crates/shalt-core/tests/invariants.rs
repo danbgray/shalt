@@ -673,6 +673,31 @@ fn same_basename_in_different_directories_does_not_collide() {
 }
 
 #[test]
+fn qwen_backend_does_not_need_an_api_key() {
+    let b = shalt_core::OpenAICompatBackend::from_preset("qwen", Some("qwen3.5:2b"), None).unwrap();
+    assert_eq!(b.name, "qwen");
+    assert!(b.base_url.contains("11434"));
+}
+
+#[test]
+fn compose_creates_a_workspace_and_a_job() {
+    let t = TempDir::new().unwrap();
+    std::env::set_var("SHALT_HOME", t.path());
+    let (project, job) = shalt_core::start_project(shalt_core::ComposeRequest {
+        prompt: "The system shall total invoices exactly.".into(),
+        backend: "qwen".into(),
+        model: "qwen3.5:2b".into(),
+        name: Some("invoices".into()),
+    })
+    .unwrap();
+    assert_eq!(project.id, "invoices");
+    assert!(Path::new(&project.path).join("spec").is_dir());
+    assert_eq!(job.kind, shalt_core::jobs::JobKind::Author);
+    assert_eq!(job.backend, "qwen");
+    std::env::remove_var("SHALT_HOME");
+}
+
+#[test]
 fn api_sandbox_refuses_absolute_and_traversal_paths() {
     let t = TempDir::new().unwrap();
     let stage = t.path();

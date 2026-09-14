@@ -37,6 +37,12 @@ pub struct Job {
     pub created_at: String,
     #[serde(default)]
     pub log: String,
+    #[serde(default)]
+    pub prompt: String,
+    #[serde(default)]
+    pub backend: String,
+    #[serde(default)]
+    pub model: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -82,6 +88,17 @@ impl JobQueue {
     }
 
     pub fn enqueue(&mut self, kind: JobKind, project_id: &str) -> Job {
+        self.enqueue_full(kind, project_id, "", "", "")
+    }
+
+    pub fn enqueue_full(
+        &mut self,
+        kind: JobKind,
+        project_id: &str,
+        prompt: &str,
+        backend: &str,
+        model: &str,
+    ) -> Job {
         let job = Job {
             id: format!("J-{:08x}", rand::random::<u32>()),
             kind,
@@ -89,9 +106,24 @@ impl JobQueue {
             status: JobStatus::Pending,
             created_at: Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
             log: String::new(),
+            prompt: prompt.into(),
+            backend: backend.into(),
+            model: model.into(),
         };
         self.jobs.push(job.clone());
         job
+    }
+
+    pub fn update(&mut self, id: &str, status: JobStatus, log: &str) -> bool {
+        if let Some(j) = self.jobs.iter_mut().find(|j| j.id == id) {
+            j.status = status;
+            if !log.is_empty() {
+                j.log = log.to_string();
+            }
+            true
+        } else {
+            false
+        }
     }
 
     pub fn interrupt_running(&mut self) {

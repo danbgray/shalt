@@ -1,11 +1,13 @@
 use axum::extract::{Path, State};
 use axum::response::{Html, IntoResponse, Json};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::Router;
 use serde::Serialize;
 use shalt_core::board::Board;
+use shalt_core::compose::{execute_author, start_project, ComposeRequest};
 use shalt_core::jobs::JobQueue;
 use shalt_core::ledger::Ledger;
+use shalt_core::list_models;
 use shalt_core::org::Org;
 use shalt_core::spec::load_specs;
 use std::net::SocketAddr;
@@ -23,6 +25,8 @@ pub async fn serve(root: PathBuf, port: u16, open: bool) -> Result<(), String> {
     let app = Router::new()
         .route("/", get(index))
         .route("/api/org", get(api_org))
+        .route("/api/models", get(api_models))
+        .route("/api/compose", post(api_compose))
         .route("/api/project/{id}", get(api_project))
         .route("/api/jobs", get(api_jobs).post(api_enqueue))
         .with_state(Arc::new(App { root }));
@@ -92,11 +96,44 @@ async fn api_org() -> Json<OrgView> {
     })
 }
 
+async fn api_models() -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "models": list_models() }))
+}
+
+#[derive(serde::Deserialize)]
+struct ComposeBody {
+    prompt: String,
+    #[serde(default)]
+    backend: String,
+    #[serde(default)]
+    model: String,
+    #[serde(default)]
+    name: Option<String>,
+}
+
+async fn api_compose(Json(body): Json<ComposeBody>) -> impl IntoResponse {
+    match start_project(ComposeRequest {
+        prompt: body.prompt,
+        backend: body.backend,
+        model: body.model,
+        name: body.name,
+    }) {
+        Ok((project, job)) => {
+            let job_id = job.id.clone();
+            tokio::task::spawn_blocking(move || {
+                let _ = execute_author(&job_id);
+            });
+            Json(serde_json::json!({ "project": project, "job": job })).into_response()
+        }
+        Err(e) => (axum::http::StatusCode::BAD_REQUEST, e).into_response(),
+    }
+}
+
 #[derive(Serialize)]
 struct ProjectView {
     id: String,
     stories: Vec<StoryView>,
-    board: Board,
+    board: shalt_core::board::Board,
     summary: serde_json::Value,
 }
 

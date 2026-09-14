@@ -153,13 +153,18 @@ impl OpenAICompatBackend {
         model: Option<&str>,
         base_url: Option<&str>,
     ) -> Result<Self, String> {
-        let (default_url, default_model, key_env) = match preset {
-            "grok" => ("https://api.x.ai/v1", "grok-4.5", "XAI_API_KEY"),
-            "openai" => ("https://api.openai.com/v1", "gpt-4.1", "OPENAI_API_KEY"),
+        let (default_url, default_model, key_env, key_required) = match preset {
+            "grok" => ("https://api.x.ai/v1", "grok-4.5", "XAI_API_KEY", true),
+            "openai" => ("https://api.openai.com/v1", "gpt-4.1", "OPENAI_API_KEY", true),
+            "qwen" | "ollama" => ("http://127.0.0.1:11434/v1", "qwen3.5:35b-128k", "", false),
             other => return Err(format!("unknown api preset {other:?}")),
         };
-        let api_key = std::env::var(key_env).unwrap_or_default();
-        if api_key.is_empty() {
+        let api_key = if key_env.is_empty() {
+            String::new()
+        } else {
+            std::env::var(key_env).unwrap_or_default()
+        };
+        if key_required && api_key.is_empty() {
             return Err(format!("no API key for '{preset}': set {key_env} in the environment"));
         }
         Ok(Self {
@@ -176,11 +181,13 @@ impl OpenAICompatBackend {
         let url = format!("{}/chat/completions", self.base_url);
         let mut last = String::new();
         for attempt in 0..4 {
-            let resp = ureq::post(&url)
-                .set("Authorization", &format!("Bearer {}", self.api_key))
+            let mut req = ureq::post(&url)
                 .set("Content-Type", "application/json")
-                .timeout(Duration::from_secs(self.timeout_secs))
-                .send_json(payload.clone());
+                .timeout(Duration::from_secs(self.timeout_secs));
+            if !self.api_key.is_empty() {
+                req = req.set("Authorization", &format!("Bearer {}", self.api_key));
+            }
+            let resp = req.send_json(payload.clone());
             match resp {
                 Ok(r) => {
                     return r.into_json::<Value>().map_err(|e| e.to_string());
@@ -206,6 +213,59 @@ impl OpenAICompatBackend {
         }
         Err(last)
     }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ModelChoice {
+    pub id: String,
+    pub backend: String,
+    pub label: String,
+    pub kind: String,
+}
+
+pub fn list_models() -> Vec<ModelChoice> {
+    let mut out = Vec::new();
+    if std::env::var("XAI_API_KEY").map(|s| !s.is_empty()).unwrap_or(false) {
+        out.push(ModelChoice {
+            id: "grok-4.5".into(),
+            backend: "grok".into(),
+            label: "Grok 4.5".into(),
+            kind: "cloud".into(),
+        });
+    }
+    if let Ok(r) = ureq::get("http://127.0.0.1:11434/v1/models")
+        .timeout(Duration::from_secs(2))
+        .call()
+    {
+        if let Ok(v) = r.into_json::<Value>() {
+            if let Some(data) = v.get("data").and_then(|d| d.as_array()) {
+                for m in data {
+                    let id = m.get("id").and_then(|i| i.as_str()).unwrap_or("");
+                    if id.is_empty() {
+                        continue;
+                    }
+                    if !id.to_lowercase().contains("qwen") {
+                        continue;
+                    }
+                    out.push(ModelChoice {
+                        id: id.into(),
+                        backend: "qwen".into(),
+                        label: format!("{id} (local)"),
+                        kind: "local".into(),
+                    });
+                }
+            }
+        }
+    }
+    if !out.iter().any(|m| m.backend == "qwen") {
+        out.push(ModelChoice {
+            id: "qwen3.5:35b-128k".into(),
+            backend: "qwen".into(),
+            label: "qwen3.5:35b-128k (local)".into(),
+            kind: "local".into(),
+        });
+    }
+    out
 }
 
 impl Backend for OpenAICompatBackend {
