@@ -300,6 +300,8 @@ green and green expires when the spec moves.
 ## Commands
 
 ```
+shall --model                    list every available model and pick a default
+shall --model=qwen3.5:2b …       use this model for this run
 shall <sentence>                 clarify if needed, then spec, y/n each scenario, then tests
 shall --yes <sentence>           no questions; accept every scenario; then tests
 shalt init [--stack NAME]        scaffold a workspace
@@ -315,8 +317,9 @@ shalt stories                    who wants what, and what is missing a narrative
 shalt diagrams                   Mermaid use-case, breakdown and pipeline diagrams
 shalt dashboard                  a self-contained HTML snapshot
 shalt mutate                     mutation-test the oracle
+shalt play / shalt loop          thin loop: tests, then code, until green (Hermes/Claude/Codex entry)
 shalt ui [status|stop|restart]   one localhost UI
-shalt org add|list|remove        local catalog of projects
+shalt org add|list|remove|play   local catalog of projects; org play runs the same loop
 shalt board                      overlay: list / unschedule
 shalt job add|list|show|pause|resume  durable job queue; a running job shows its prompt in the UI
 ```

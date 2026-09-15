@@ -15,7 +15,7 @@ const MAX_WRITE: usize = 400_000;
 pub const ASSUME_REPLY: &str = "The human is not taking questions this turn. Make a reasonable assumption, write it into the scenario as a concrete example, and continue.";
 
 pub const ROLE_SYSTEM: &[(&str, &str)] = &[
-    ("author", "You are the SPEC AUTHOR in a BDD pipeline. You translate a plain-English request into Gherkin feature files under spec/. If anything needed to write *concrete* scenarios is missing or ambiguous (who the user is, currency, rounding, error cases, what is in or out of scope), call ask_human *before* write_file. Ask one question at a time. Do not invent business rules you could have asked about. Once you know enough, write scenarios a non-engineer could approve: one behaviour per scenario, concrete example values. Do not write code, tests, or step definitions. Only create files under spec/."),
+    ("author", "You are the SPEC AUTHOR in a BDD pipeline. You write Gherkin feature files under spec/. If src/ contains code, this is an existing system: describe behaviour that is already implemented, do not invent features, do not modify src/. If src/ is empty, translate the human's request into new scenarios. If anything needed to write *concrete* scenarios is missing or ambiguous, call ask_human *before* write_file. Ask one question at a time. One behaviour per scenario, concrete example values. Tag each Feature with @epic:<area> (one token, e.g. @epic:planning) so related features group; omit the tag rather than inventing a junk area. Do not write code, tests, or step definitions. Only create files under spec/."),
     ("stepwright", "You are the STEPWRIGHT in a BDD pipeline. You see the approved Gherkin spec and NOTHING of the implementation -- that is deliberate. Write pytest-bdd step definitions under steps/ that bind each scenario to the behaviour it describes, and declare the public API surface you call in contract/interface.md. Import only from that declared surface. Never weaken an assertion to make it easier to satisfy; you are the oracle, not the builder. Only create files under steps/ and contract/."),
     ("implementer", "You are the IMPLEMENTER in a BDD pipeline. You see the spec, the interface contract, and the failing test output -- you do NOT see the step definitions, and you cannot edit them. Write code under src/ that satisfies the specified behaviour against the contract. Do not special-case test inputs or hard-code expected outputs; implement the behaviour. Only create files under src/."),
 ];
@@ -136,7 +136,7 @@ fn tools_json() -> Value {
         {"type":"function","function":{"name":"read_file","description":"Read one file.","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}},
         {"type":"function","function":{"name":"write_file","description":"Create or overwrite one file with the complete content.","parameters":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}}},
         {"type":"function","function":{"name":"done","description":"Call this when the work is complete.","parameters":{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"]}}},
-        {"type":"function","function":{"name":"ask_human","description":"Ask the human one clarifying question. Use this when the request is too vague to write a concrete scenario.","parameters":{"type":"object","properties":{"question":{"type":"string","description":"One question, in plain language."}},"required":["question"]}}}
+        {"type":"function","function":{"name":"ask_human","description":"Ask the human one clarifying question. Always include a concrete guess they can accept or edit.","parameters":{"type":"object","properties":{"question":{"type":"string","description":"One question, in plain language."},"guess":{"type":"string","description":"Your best concrete answer: a typical example, default, or recommended choice. Always provide one."}},"required":["question","guess"]}}}
     ])
 }
 
@@ -152,7 +152,13 @@ pub struct OpenAICompatBackend {
     /// message then continue, `Err` = stop the turn.
     pub on_gate: Option<Box<dyn FnMut() -> Result<Option<String>, String> + Send>>,
     /// Clarifying questions. If unset, the model is told to assume.
-    pub on_ask: Option<Box<dyn FnMut(&str) -> Result<String, String> + Send>>,
+    pub on_ask: Option<Box<dyn FnMut(&str, &str) -> Result<String, String> + Send>>,
+    /// After a successful write_file: (relative path, content).
+    pub on_write: Option<Box<dyn FnMut(&str, &str) + Send>>,
+    /// Prompt and completion tokens from one API response.
+    pub on_usage: Option<Box<dyn FnMut(i64, i64) + Send>>,
+    pub last_prompt_tokens: i64,
+    pub last_completion_tokens: i64,
 }
 
 
@@ -171,11 +177,15 @@ impl OpenAICompatBackend {
         };
         let api_key = if key_env.is_empty() {
             String::new()
+        } else if key_env == "XAI_API_KEY" {
+            xai_api_key().unwrap_or_default()
         } else {
             std::env::var(key_env).unwrap_or_default()
         };
         if key_required && api_key.is_empty() {
-            return Err(format!("no API key for '{preset}': set {key_env} in the environment"));
+            return Err(format!(
+                "no API key for '{preset}': set {key_env} (or GROK_API_KEY), or put it in ~/.shalt/config.toml"
+            ));
         }
         Ok(Self {
             name: preset.into(),
@@ -183,10 +193,14 @@ impl OpenAICompatBackend {
             model: model.unwrap_or(default_model).into(),
             api_key,
             max_steps: 40,
-            timeout_secs: 180,
+            timeout_secs: if preset == "qwen" || preset == "ollama" { 45 } else { 180 },
             on_progress: None,
             on_gate: None,
             on_ask: None,
+            on_write: None,
+            on_usage: None,
+            last_prompt_tokens: 0,
+            last_completion_tokens: 0,
         })
     }
 
@@ -196,41 +210,113 @@ impl OpenAICompatBackend {
         }
     }
 
-    fn post(&self, payload: &Value) -> Result<Value, String> {
+    fn local(&self) -> bool {
+        self.name == "qwen" || self.name == "ollama"
+    }
+
+    fn note_usage(&mut self, data: &Value) {
+        let u = match data.get("usage") {
+            Some(v) => v,
+            None => return,
+        };
+        let p = u.get("prompt_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+        let c = u
+            .get("completion_tokens")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        self.last_prompt_tokens += p;
+        self.last_completion_tokens += c;
+        if let Some(cb) = &mut self.on_usage {
+            cb(p, c);
+        }
+        if p + c > 0 {
+            self.emit(&format!("tokens +{} (prompt {p} · completion {c})", p + c));
+        }
+    }
+
+    fn post(&mut self, payload: &Value) -> Result<Value, String> {
         let url = format!("{}/chat/completions", self.base_url);
-        let mut last = String::new();
-        for attempt in 0..4 {
+        let slice = Duration::from_secs(if self.local() { 45 } else { self.timeout_secs });
+        let deadline = std::time::Instant::now()
+            + Duration::from_secs(if self.local() { 900 } else { self.timeout_secs * 4 });
+        let mut n = 0u32;
+        loop {
+            n += 1;
+            if let Some(gate) = &mut self.on_gate {
+                match gate() {
+                    Err(stop) => return Err(stop),
+                    Ok(Some(_)) | Ok(None) => {}
+                }
+            }
+            if std::time::Instant::now() > deadline {
+                return Err(
+                    "the model didn't respond in time. Retry when Ollama is free.".into(),
+                );
+            }
+            if n > 1 {
+                self.emit("still waiting on the model…");
+            }
             let mut req = ureq::post(&url)
                 .set("Content-Type", "application/json")
-                .timeout(Duration::from_secs(self.timeout_secs));
+                .timeout(slice);
             if !self.api_key.is_empty() {
                 req = req.set("Authorization", &format!("Bearer {}", self.api_key));
             }
-            let resp = req.send_json(payload.clone());
-            match resp {
+            match req.send_json(payload.clone()) {
                 Ok(r) => {
-                    return r.into_json::<Value>().map_err(|e| e.to_string());
+                    let data: Value = r.into_json().map_err(|e| e.to_string())?;
+                    self.note_usage(&data);
+                    return Ok(data);
                 }
                 Err(ureq::Error::Status(code, r)) => {
                     let detail: String = r.into_string().unwrap_or_default().chars().take(600).collect();
-                    if matches!(code, 429 | 500 | 502 | 503 | 529) && attempt < 3 {
-                        thread::sleep(Duration::from_secs(1 << attempt));
-                        last = format!("HTTP {code}: {detail}");
+                    if matches!(code, 429 | 500 | 502 | 503 | 529) {
+                        thread::sleep(Duration::from_secs(2));
                         continue;
                     }
                     return Err(format!("{} API error HTTP {code}: {detail}", self.name));
                 }
                 Err(e) => {
-                    if attempt < 3 {
-                        thread::sleep(Duration::from_secs(1 << attempt));
-                        last = e.to_string();
+                    let msg = e.to_string();
+                    let timeout = msg.contains("timed out") || msg.contains("timeout");
+                    if timeout && self.local() {
                         continue;
                     }
-                    return Err(format!("could not reach {}: {e}", self.base_url));
+                    if n < 4 {
+                        thread::sleep(Duration::from_secs(1 << n.min(3)));
+                        continue;
+                    }
+                    return Err(format!("could not reach {}: {msg}", self.base_url));
                 }
             }
         }
-        Err(last)
+    }
+
+    pub fn complete(&mut self, system: &str, history: &[(String, String)]) -> Result<String, String> {
+        let mut messages = vec![json!({"role": "system", "content": system})];
+        for (role, content) in history {
+            messages.push(json!({"role": role, "content": content}));
+        }
+        let payload = json!({
+            "model": self.model,
+            "messages": messages,
+            "temperature": 0.3,
+        });
+        let data = self.post(&payload)?;
+        let text = data
+            .get("choices")
+            .and_then(|c| c.get(0))
+            .and_then(|c| c.get("message"))
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if text.is_empty() {
+            Err("empty reply".into())
+        } else {
+            Ok(text)
+        }
     }
 }
 
@@ -242,6 +328,42 @@ pub struct ModelChoice {
     pub kind: String,
 }
 
+#[derive(serde::Deserialize, Default)]
+struct KeysFile {
+    #[serde(default)]
+    keys: KeyVals,
+}
+
+#[derive(serde::Deserialize, Default)]
+struct KeyVals {
+    #[serde(default)]
+    xai: String,
+    #[serde(default)]
+    grok: String,
+}
+
+/// xAI key: `XAI_API_KEY`, then `GROK_API_KEY`, then `~/.shalt/config.toml`.
+pub fn xai_api_key() -> Option<String> {
+    for var in ["XAI_API_KEY", "GROK_API_KEY"] {
+        if let Ok(v) = std::env::var(var) {
+            let v = v.trim().to_string();
+            if !v.is_empty() {
+                return Some(v);
+            }
+        }
+    }
+    let path = crate::org::Org::home_dir().join("config.toml");
+    let raw = std::fs::read_to_string(path).ok()?;
+    let file: KeysFile = toml::from_str(&raw).ok()?;
+    for v in [file.keys.xai, file.keys.grok] {
+        let v = v.trim();
+        if !v.is_empty() {
+            return Some(v.to_string());
+        }
+    }
+    None
+}
+
 pub fn ollama_reachable() -> bool {
     ureq::get("http://127.0.0.1:11434/v1/models")
         .timeout(Duration::from_secs(1))
@@ -249,49 +371,136 @@ pub fn ollama_reachable() -> bool {
         .is_ok()
 }
 
-pub fn list_models() -> Vec<ModelChoice> {
-    let mut out = Vec::new();
-    if std::env::var("XAI_API_KEY").map(|s| !s.is_empty()).unwrap_or(false) {
-        out.push(ModelChoice {
-            id: "grok-4.5".into(),
-            backend: "grok".into(),
-            label: "Grok 4.5".into(),
-            kind: "cloud".into(),
-        });
-    }
-    if let Ok(r) = ureq::get("http://127.0.0.1:11434/v1/models")
-        .timeout(Duration::from_secs(2))
-        .call()
-    {
-        if let Ok(v) = r.into_json::<Value>() {
-            if let Some(data) = v.get("data").and_then(|d| d.as_array()) {
-                for m in data {
-                    let id = m.get("id").and_then(|i| i.as_str()).unwrap_or("");
-                    if id.is_empty() {
-                        continue;
-                    }
-                    if !id.to_lowercase().contains("qwen") {
-                        continue;
-                    }
-                    out.push(ModelChoice {
-                        id: id.into(),
-                        backend: "qwen".into(),
-                        label: format!("{id} (local)"),
-                        kind: "local".into(),
-                    });
-                }
-            }
+fn id_has_date(id: &str) -> bool {
+    let b = id.as_bytes();
+    b.windows(10).any(|w| {
+        w[4] == b'-'
+            && w[7] == b'-'
+            && w[0..4].iter().all(u8::is_ascii_digit)
+            && w[5..7].iter().all(u8::is_ascii_digit)
+            && w[8..10].iter().all(u8::is_ascii_digit)
+    })
+}
+
+fn usable_model(id: &str, kind: &str) -> bool {
+    let l = id.to_lowercase();
+    for skip in [
+        "embed",
+        "tts",
+        "whisper",
+        "dall-e",
+        "image",
+        "audio",
+        "realtime",
+        "moderation",
+        "davinci",
+        "babbage",
+        "sora",
+        "transcribe",
+        "imagine",
+        "computer-use",
+    ] {
+        if l.contains(skip) {
+            return false;
         }
     }
-    if !out.iter().any(|m| m.backend == "qwen") {
+    if kind == "cloud" && id_has_date(id) {
+        return false;
+    }
+    true
+}
+
+fn push_openai_compat(out: &mut Vec<ModelChoice>, url: &str, key: Option<&str>, backend: &str, kind: &str) {
+    let mut req = ureq::get(url).timeout(Duration::from_secs(2));
+    if let Some(k) = key {
+        if !k.is_empty() {
+            req = req.set("Authorization", &format!("Bearer {k}"));
+        }
+    }
+    let Ok(r) = req.call() else { return };
+    let Ok(v) = r.into_json::<Value>() else { return };
+    let Some(data) = v.get("data").and_then(|d| d.as_array()) else { return };
+    for m in data {
+        let id = m.get("id").and_then(|i| i.as_str()).unwrap_or("");
+        if id.is_empty() {
+            continue;
+        }
+        if !usable_model(id, kind) {
+            continue;
+        }
         out.push(ModelChoice {
-            id: "qwen3.5:35b-128k".into(),
-            backend: "qwen".into(),
-            label: "qwen3.5:35b-128k (local)".into(),
-            kind: "local".into(),
+            id: id.into(),
+            backend: backend.into(),
+            label: format!("{id} ({kind})"),
+            kind: kind.into(),
         });
     }
+}
+
+pub fn list_models() -> Vec<ModelChoice> {
+    let mut out = Vec::new();
+    if let Some(key) = xai_api_key() {
+        let before = out.len();
+        push_openai_compat(&mut out, "https://api.x.ai/v1/models", Some(&key), "grok", "cloud");
+        if out.len() == before {
+            out.push(ModelChoice {
+                id: "grok-4.5".into(),
+                backend: "grok".into(),
+                label: "grok-4.5 (cloud)".into(),
+                kind: "cloud".into(),
+            });
+        }
+    }
+    if let Ok(key) = std::env::var("OPENAI_API_KEY") {
+        if !key.trim().is_empty() {
+            push_openai_compat(
+                &mut out,
+                "https://api.openai.com/v1/models",
+                Some(key.trim()),
+                "openai",
+                "cloud",
+            );
+        }
+    }
+    push_openai_compat(
+        &mut out,
+        "http://127.0.0.1:11434/v1/models",
+        None,
+        "ollama",
+        "local",
+    );
+    out.sort_by(|a, b| a.kind.cmp(&b.kind).then(a.id.cmp(&b.id)));
     out
+}
+
+pub fn preferred_model() -> Option<(String, String)> {
+    let path = crate::org::Org::home_dir().join("config.toml");
+    let raw = std::fs::read_to_string(path).ok()?;
+    let table: toml::Table = raw.parse().ok()?;
+    let m = table.get("model")?.as_table()?;
+    let backend = m.get("backend")?.as_str()?.to_string();
+    let id = m.get("id")?.as_str()?.to_string();
+    if backend.is_empty() || id.is_empty() {
+        None
+    } else {
+        Some((backend, id))
+    }
+}
+
+pub fn save_preferred_model(backend: &str, id: &str) -> std::io::Result<()> {
+    let path = crate::org::Org::home_dir().join("config.toml");
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let mut table: toml::Table = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_default();
+    let mut model = toml::Table::new();
+    model.insert("backend".into(), toml::Value::String(backend.into()));
+    model.insert("id".into(), toml::Value::String(id.into()));
+    table.insert("model".into(), toml::Value::Table(model));
+    std::fs::write(path, format!("{table}"))
 }
 
 impl Backend for OpenAICompatBackend {
@@ -345,16 +554,19 @@ impl Backend for OpenAICompatBackend {
                 }
             }
             messages.push(assistant);
-            let Some(arr) = calls.as_array() else {
-                let text = msg.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
-                if !text.trim().is_empty() {
-                    self.emit(&text);
-                }
-                transcript.push(text);
-                break;
-            };
+            let arr = calls.as_array().cloned().unwrap_or_default();
             if arr.is_empty() {
                 let text = msg.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                if text.contains('?') {
+                    if let Some(cb) = &mut self.on_ask {
+                        let a = cb(&text, "")?;
+                        messages.push(json!({
+                            "role": "user",
+                            "content": format!("The human answered:\n{a}\n\nContinue. Ask at most one question at a time with ask_human, or write the spec files.")
+                        }));
+                        continue;
+                    }
+                }
                 if !text.trim().is_empty() {
                     self.emit(&text);
                 }
@@ -376,24 +588,33 @@ impl Backend for OpenAICompatBackend {
                     if q.is_empty() {
                         "ERROR: question is required".into()
                     } else {
-                        self.emit(&format!("? {q}"));
+                        let guess = args.get("guess").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
                         let replied = if let Some(cb) = &mut self.on_ask {
-                            cb(&q)
+                            cb(&q, &guess)
                         } else {
-                            Ok(ASSUME_REPLY.to_string())
+                            Ok(if guess.is_empty() { ASSUME_REPLY.to_string() } else { guess.clone() })
                         };
                         match replied {
-                            Ok(a) => {
-                                self.emit(&format!("  you: {a}"));
-                                a
-                            }
+                            Ok(a) => a,
                             Err(e) => return Err(e),
                         }
                     }
                 } else {
-                    dispatch(stage, fname, &args)
+                    let result = dispatch(stage, fname, &args);
+                    if fname == "write_file" && result.starts_with("wrote ") {
+                        let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                        let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                        if let Some(cb) = &mut self.on_write {
+                            cb(path, content);
+                        }
+                    }
+                    result
                 };
-                let line = format!("[{fname}] {}", result.chars().take(200).collect::<String>());
+                let line = if fname == "ask_human" {
+                    "[ask_human] answered".into()
+                } else {
+                    format!("[{fname}] {}", result.chars().take(200).collect::<String>())
+                };
                 self.emit(&line);
                 transcript.push(line);
                 messages.push(json!({
