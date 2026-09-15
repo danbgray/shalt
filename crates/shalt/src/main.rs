@@ -1276,7 +1276,19 @@ fn live_backend(cli: &Cli) -> Result<OpenAICompatBackend, i32> {
         1
     })?;
     eprintln!("{} {} / {}", term::mute("using"), term::accent(&preset), term::accent(&b.model));
-    b.on_progress = Some(Box::new(|line| eprintln!("{}", term::progress(line))));
+    b.on_progress = Some(Box::new(|line| {
+        use std::io::Write;
+        let painted = term::progress(line);
+        let err = std::io::stderr();
+        let mut err = err.lock();
+        if line.starts_with("waiting on ") && std::io::stderr().is_terminal() {
+            let _ = write!(err, "\r{painted}        ");
+            let _ = err.flush();
+        } else {
+            let _ = write!(err, "\r\x1b[K");
+            let _ = writeln!(err, "{painted}");
+        }
+    }));
     if !cli.yes && io::stdin().is_terminal() {
         b.on_ask = Some(Box::new(|question: &str, guess: &str| {
             loop {

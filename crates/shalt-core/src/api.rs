@@ -7,8 +7,10 @@ use crate::backends::Backend;
 use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const MAX_READ: usize = 60_000;
 const MAX_WRITE: usize = 400_000;
@@ -234,11 +236,21 @@ impl OpenAICompatBackend {
         }
     }
 
+    fn fmt_elapsed(d: Duration) -> String {
+        let s = d.as_secs();
+        if s < 60 {
+            format!("{s}s")
+        } else {
+            format!("{}m {:02}s", s / 60, s % 60)
+        }
+    }
+
     fn post(&mut self, payload: &Value) -> Result<Value, String> {
         let url = format!("{}/chat/completions", self.base_url);
         let slice = Duration::from_secs(if self.local() { 45 } else { self.timeout_secs });
-        let deadline = std::time::Instant::now()
+        let deadline = Instant::now()
             + Duration::from_secs(if self.local() { 900 } else { self.timeout_secs * 4 });
+        let t0 = Instant::now();
         let mut n = 0u32;
         loop {
             n += 1;
@@ -248,21 +260,46 @@ impl OpenAICompatBackend {
                     Ok(Some(_)) | Ok(None) => {}
                 }
             }
-            if std::time::Instant::now() > deadline {
+            if Instant::now() > deadline {
                 return Err(
                     "the model didn't respond in time. Retry when Ollama is free.".into(),
                 );
             }
-            if n > 1 {
-                self.emit("still waiting on the model…");
-            }
+            let stop = Arc::new(AtomicBool::new(false));
+            let stop2 = stop.clone();
+            let model = self.model.clone();
+            let cb = Arc::new(Mutex::new(self.on_progress.take()));
+            let cb2 = cb.clone();
+            let hb = thread::spawn(move || {
+                let mut ticks = 0u32;
+                while !stop2.load(Ordering::Relaxed) {
+                    thread::sleep(Duration::from_millis(500));
+                    if stop2.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    ticks += 1;
+                    if ticks % 4 != 0 {
+                        continue;
+                    }
+                    let msg = format!("waiting on {model}… {}", Self::fmt_elapsed(t0.elapsed()));
+                    if let Ok(mut g) = cb2.lock() {
+                        if let Some(f) = g.as_mut() {
+                            f(&msg);
+                        }
+                    }
+                }
+            });
             let mut req = ureq::post(&url)
                 .set("Content-Type", "application/json")
                 .timeout(slice);
             if !self.api_key.is_empty() {
                 req = req.set("Authorization", &format!("Bearer {}", self.api_key));
             }
-            match req.send_json(payload.clone()) {
+            let result = req.send_json(payload.clone());
+            stop.store(true, Ordering::Relaxed);
+            let _ = hb.join();
+            self.on_progress = cb.lock().ok().and_then(|mut g| g.take());
+            match result {
                 Ok(r) => {
                     let data: Value = r.into_json().map_err(|e| e.to_string())?;
                     self.note_usage(&data);
@@ -271,6 +308,10 @@ impl OpenAICompatBackend {
                 Err(ureq::Error::Status(code, r)) => {
                     let detail: String = r.into_string().unwrap_or_default().chars().take(600).collect();
                     if matches!(code, 429 | 500 | 502 | 503 | 529) {
+                        self.emit(&format!(
+                            "HTTP {code} after {} — retrying",
+                            Self::fmt_elapsed(t0.elapsed())
+                        ));
                         thread::sleep(Duration::from_secs(2));
                         continue;
                     }
@@ -280,6 +321,10 @@ impl OpenAICompatBackend {
                     let msg = e.to_string();
                     let timeout = msg.contains("timed out") || msg.contains("timeout");
                     if timeout && self.local() {
+                        self.emit(&format!(
+                            "still generating after {} — keeping the request open",
+                            Self::fmt_elapsed(t0.elapsed())
+                        ));
                         continue;
                     }
                     if n < 4 {
@@ -610,10 +655,18 @@ impl Backend for OpenAICompatBackend {
                     }
                     result
                 };
-                let line = if fname == "ask_human" {
-                    "[ask_human] answered".into()
-                } else {
-                    format!("[{fname}] {}", result.chars().take(200).collect::<String>())
+                let line = match fname {
+                    "ask_human" => "[ask_human] answered".into(),
+                    "read_file" => format!(
+                        "[read_file] {}",
+                        args.get("path").and_then(|v| v.as_str()).unwrap_or("")
+                    ),
+                    "list_files" => {
+                        let n = result.lines().filter(|l| !l.is_empty() && *l != "(no files yet)").count();
+                        format!("[list_files] {n} file(s)")
+                    }
+                    "write_file" => result.chars().take(120).collect::<String>(),
+                    other => format!("[{other}] {}", result.chars().take(80).collect::<String>()),
                 };
                 self.emit(&line);
                 transcript.push(line);

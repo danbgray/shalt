@@ -188,7 +188,7 @@ pub fn progress(line: &str) -> String {
     if t.starts_with("you:") || t.starts_with("  you:") {
         return italic(line);
     }
-    if t.starts_with("[write_file]") {
+    if t.starts_with("[write_file]") || t.starts_with("wrote ") {
         return ok(line);
     }
     if t.starts_with("[ask_human]") {
@@ -197,7 +197,10 @@ pub fn progress(line: &str) -> String {
     if t.starts_with("[done]") {
         return mute(line);
     }
-    if t.starts_with("step ") || t.starts_with("contacting ") || t.starts_with("still waiting") || t.starts_with("tokens ") {
+    if t.starts_with("waiting on ") {
+        return mute(line);
+    }
+    if t.starts_with("step ") || t.starts_with("contacting ") || t.starts_with("still generating") || t.starts_with("tokens ") || t.starts_with("HTTP ") {
         return mute(line);
     }
     if t.contains("REJECTED") || t.starts_with("OVERFIT") {
