@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use shalt_core::backends::FixtureBackend;
 use shalt_core::board::{verify_drift, Board};
-use shalt_core::config::{write_config, Config};
+use shalt_core::config::Config;
 use shalt_core::integrity::audit;
 use shalt_core::jobs::{JobKind, JobQueue};
 use shalt_core::ledger::{Ledger, GREEN, ORPHAN, PENDING, RED, STALE};
@@ -60,7 +60,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Cmd {
     Init {
-        #[arg(long, default_value = "python")]
+        #[arg(long, default_value = "rust")]
         stack: String,
         #[arg(long, default_value = "")]
         name: String,
@@ -364,29 +364,10 @@ fn run(cli: Cli) -> Result<i32, i32> {
     let root = cli.root.canonicalize().unwrap_or_else(|_| cli.root.clone());
     match &cli.cmd {
         Cmd::Init { stack, name } => {
-            let preset = write_config(&root, stack, name).map_err(|e| {
+            let preset = shalt_core::config::init_workspace(&root, stack, name).map_err(|e| {
                 eprintln!("{e}");
                 1
             })?;
-            let cfg = Config::load(&root).unwrap_or_default();
-            for d in ["spec", "contract", ".shalt"] {
-                std::fs::create_dir_all(root.join(d)).ok();
-            }
-            std::fs::create_dir_all(root.join(&cfg.steps)).ok();
-            std::fs::create_dir_all(root.join(&cfg.src)).ok();
-            if stack == "python" {
-                std::fs::write(
-                    root.join(&cfg.steps).join("conftest.py"),
-                    shalt_core::config::python_reporter_template(),
-                )
-                .ok();
-            }
-            std::fs::write(
-                root.join(".shalt/.gitignore"),
-                "stage/\nbackup/\nlast_run.json\nmessages.ndjson\ncucumber.json\n",
-            )
-            .ok();
-            Ledger::default().save(&ledger_path(&root)).ok();
             println!("initialised shalt workspace at {}  ({})", root.display(), preset.label);
             Ok(0)
         }
@@ -1449,7 +1430,8 @@ fn cmd_specify(cli: &Cli, root: &Path, sentence: &str) -> Result<i32, i32> {
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "project".into());
-        shalt_core::config::init_workspace(root, "python", &name).map_err(|e| {
+        let stack = shalt_core::config::detect_stack(root);
+        shalt_core::config::init_workspace(root, stack, &name).map_err(|e| {
             eprintln!("{e}");
             1
         })?;

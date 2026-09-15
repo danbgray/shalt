@@ -20,12 +20,12 @@ pub fn preset(stack: &str) -> Option<Preset> {
     Some(match stack {
         "python" => Preset {
             label: "Python / pytest-bdd",
-            command: "python3 -m pytest -q --no-header {steps}",
+            command: "python3 -m pytest -q --no-header -p shalt_report {steps}",
             format: "shalt",
             report: ".shalt/last_run.json",
             src: "src",
             steps: "steps",
-            note: "Workspace-local conftest.py writes shalt JSON from @rid tags. Uninstalling shalt does not break pytest.",
+            note: "Reporter is .shalt/shalt_report.py (not in steps/).",
         },
         "javascript" => Preset {
             label: "JavaScript / cucumber-js",
@@ -248,6 +248,59 @@ color = "auto"
     Ok(p)
 }
 
+pub fn detect_stack(root: &Path) -> &'static str {
+    if root.join("Cargo.toml").exists() {
+        "rust"
+    } else if root.join("package.json").exists() {
+        "javascript"
+    } else if root.join("go.mod").exists() {
+        "go"
+    } else if root.join("pom.xml").exists() || root.join("build.gradle").exists() {
+        "java"
+    } else if root.join("Gemfile").exists() {
+        "ruby"
+    } else {
+        "rust"
+    }
+}
+
+/// Scaffold shalt files without clobbering an existing repo's source or config.
+pub fn ensure_workspace(root: &Path, stack: &str, name: &str) -> Result<Preset, String> {
+    let had_config = root.join(CONFIG_NAME).exists();
+    let preset = if had_config {
+        preset(stack).ok_or_else(|| format!("unknown stack {stack:?}"))?
+    } else {
+        write_config(root, stack, name)?
+    };
+    let cfg = Config::load(root).unwrap_or_default();
+    for d in ["spec", "contract", ".shalt"] {
+        std::fs::create_dir_all(root.join(d)).map_err(|e| e.to_string())?;
+    }
+    std::fs::create_dir_all(root.join(&cfg.steps)).map_err(|e| e.to_string())?;
+    if !root.join(&cfg.src).exists() {
+        std::fs::create_dir_all(root.join(&cfg.src)).map_err(|e| e.to_string())?;
+    }
+    if stack == "python" {
+        write_python_reporter(root)?;
+        let req = root.join("requirements.txt");
+        if !req.exists() {
+            std::fs::write(&req, "pytest>=8\npytest-bdd>=8\n").map_err(|e| e.to_string())?;
+        }
+    }
+    let gi = root.join(".shalt/.gitignore");
+    if !gi.exists() {
+        std::fs::write(&gi, "stage/\nbackup/\nlast_run.json\nmessages.ndjson\ncucumber.json\n")
+            .map_err(|e| e.to_string())?;
+    }
+    let led = root.join(".shalt/ledger.json");
+    if !led.exists() {
+        crate::ledger::Ledger::default()
+            .save(&led)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(preset)
+}
+
 pub fn init_workspace(root: &Path, stack: &str, name: &str) -> Result<Preset, String> {
     let preset = write_config(root, stack, name)?;
     let cfg = Config::load(root).unwrap_or_default();
@@ -257,8 +310,12 @@ pub fn init_workspace(root: &Path, stack: &str, name: &str) -> Result<Preset, St
     std::fs::create_dir_all(root.join(&cfg.steps)).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(root.join(&cfg.src)).map_err(|e| e.to_string())?;
     if stack == "python" {
-        std::fs::write(root.join(&cfg.steps).join("conftest.py"), python_reporter_template())
-            .map_err(|e| e.to_string())?;
+        write_python_reporter(root)?;
+        std::fs::write(
+            root.join("requirements.txt"),
+            "pytest>=8\npytest-bdd>=8\n",
+        )
+        .map_err(|e| e.to_string())?;
     }
     std::fs::write(
         root.join(".shalt/.gitignore"),
@@ -271,30 +328,44 @@ pub fn init_workspace(root: &Path, stack: &str, name: &str) -> Result<Preset, St
     Ok(preset)
 }
 
-/// Workspace-local pytest plugin. Binds by pytest-bdd tags (`rid:S-xxxxxxxx`).
-/// Lives in the project so uninstalling shalt does not break `pytest`.
+fn write_python_reporter(root: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(root.join(".shalt")).map_err(|e| e.to_string())?;
+    let dest = root.join(".shalt/shalt_report.py");
+    if dest.exists() {
+        return Ok(());
+    }
+    std::fs::write(dest, python_reporter_template()).map_err(|e| e.to_string())
+}
+
+/// Pytest plugin. Lives in `.shalt/`, not `steps/`, so agents do not treat it as tests.
 pub fn python_reporter_template() -> &'static str {
-    r#"# workspace-local shalt reporter — not part of the shalt binary
+    r#"# shalt pytest reporter — lives in .shalt/, not the stepwright's zone
 import json, os, re, sys
 from pathlib import Path
 
 RID_RE = re.compile(r"^rid:(S-[0-9a-f]{8})$")
 _STATE = {"node_to_rid": {}, "outcomes": {}, "report": None}
 
-src = Path(__file__).resolve().parents[1] / "src"
+src = Path(__file__).resolve().parents[1] / "src"  # workspace root / src
 if str(src) not in sys.path:
     sys.path.insert(0, str(src))
 
 def pytest_configure(config):
     _STATE["report"] = os.environ.get("SHALT_REPORT")
 
-def pytest_bdd_before_scenario(request, feature, scenario):
-    for tag in getattr(scenario, "tags", None) or []:
-        name = str(tag).strip().lstrip("@")
-        m = RID_RE.fullmatch(name)
-        if m:
-            _STATE["node_to_rid"][request.node.nodeid] = m.group(1)
-            return
+try:
+    import pytest_bdd  # noqa: F401
+except ImportError:
+    pytest_bdd = None
+
+if pytest_bdd is not None:
+    def pytest_bdd_before_scenario(request, feature, scenario):
+        for tag in getattr(scenario, "tags", None) or []:
+            name = str(tag).strip().lstrip("@")
+            m = RID_RE.fullmatch(name)
+            if m:
+                _STATE["node_to_rid"][request.node.nodeid] = m.group(1)
+                return
 
 def pytest_runtest_logreport(report):
     if report.when != "call" and not (report.when == "setup" and report.failed):

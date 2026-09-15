@@ -63,9 +63,9 @@ Cucumber-family report.** So binding a result back to a scenario needs no filena
 per-language shim, and no guessing — the identity is carried in the report itself.
 
 `shalt init --stack <python|javascript|go|java|ruby|dotnet|rust>` writes a starting config for
-that toolchain. A Python workspace gets a **project-local** `conftest.py` that writes shalt JSON
-from `@rid:` tags; uninstalling shalt does not break `pytest`. Anything that emits Cucumber JSON
-or Cucumber Messages works without new code.
+that toolchain. A Python workspace keeps the rid reporter in `.shalt/shalt_report.py`, not in
+`steps/` — that zone is for the stepwright. Anything that emits Cucumber JSON or Cucumber
+Messages works without new code. `shall` on a new directory inits **Rust** (cucumber-rs).
 
 The claim is exercised, not asserted: [`examples/rust-billing`](examples/rust-billing) is a real
 Cargo project driven through cucumber-rs. It found two bugs on first contact — a tag-spelling
