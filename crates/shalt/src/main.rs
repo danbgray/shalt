@@ -1299,20 +1299,27 @@ fn live_backend(cli: &Cli) -> Result<OpenAICompatBackend, i32> {
     Ok(b)
 }
 
-fn prompt_yn(label: &str) -> Result<bool, i32> {
+enum Keep {
+    Yes,
+    No,
+    All,
+}
+
+fn prompt_keep(label: &str) -> Result<Keep, i32> {
     let stdin = io::stdin();
     let mut stdout = io::stdout();
     loop {
-        print!("{} {} ", label, term::mute("[y/n]"));
+        print!("{} {} ", label, term::mute("[y/n/a]"));
         let _ = stdout.flush();
         let mut line = String::new();
         if stdin.lock().read_line(&mut line).is_err() {
             return Err(1);
         }
         match line.trim().to_lowercase().as_str() {
-            "y" | "yes" => return Ok(true),
-            "n" | "no" => return Ok(false),
-            _ => eprintln!("  type y or n"),
+            "y" | "yes" => return Ok(Keep::Yes),
+            "n" | "no" => return Ok(Keep::No),
+            "a" | "all" => return Ok(Keep::All),
+            _ => eprintln!("  type y, n, or a (approve all remaining)"),
         }
     }
 }
@@ -1329,6 +1336,7 @@ fn review_scenarios(root: &Path) -> Result<usize, i32> {
     })?;
     let mut drop: Vec<(String, usize)> = Vec::new();
     let mut kept = 0usize;
+    let mut accept_rest = false;
     for f in &features {
         let path = spec.join(&f.file);
         let raw = std::fs::read_to_string(&path).unwrap_or_default();
@@ -1348,11 +1356,21 @@ fn review_scenarios(root: &Path) -> Result<usize, i32> {
             let e = end.saturating_sub(1).min(n);
             let body = if s < e { lines[s..e].join("\n") } else { sc.name.clone() };
             println!("\n{}\n", term::gherkin(&body));
-            if prompt_yn("Keep this scenario?")? {
+            if accept_rest {
                 kept += 1;
-            } else {
-                drop.push((f.file.clone(), start));
-                println!("  {}", term::bad("dropped."));
+                continue;
+            }
+            match prompt_keep("Keep this scenario?")? {
+                Keep::Yes => kept += 1,
+                Keep::No => {
+                    drop.push((f.file.clone(), start));
+                    println!("  {}", term::bad("dropped."));
+                }
+                Keep::All => {
+                    kept += 1;
+                    accept_rest = true;
+                    println!("  {}", term::ok("approved this and the rest."));
+                }
             }
         }
     }
