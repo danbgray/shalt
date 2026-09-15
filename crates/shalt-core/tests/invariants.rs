@@ -4,6 +4,7 @@ use shalt_core::backends::FnBackend;
 use shalt_core::board::Board;
 use shalt_core::integrity::{diff_snap, snapshot, GuardedTurn};
 use shalt_core::jobs::{JobKind, JobQueue, JobStatus};
+use shalt_core::org::Org;
 use shalt_core::ledger::{Ledger, GREEN, ORPHAN, PENDING, RED, STALE};
 use shalt_core::roles::{run_role, RoleError};
 use shalt_core::spec::{holdout_rids, load_specs, stamp_rids, strip_holdouts};
@@ -268,6 +269,37 @@ fn dropping_a_scenario_block_leaves_the_other() {
 }
 
 #[test]
+fn rewrite_and_stamp_a_pending_scenario() {
+    let t = TempDir::new().unwrap();
+    let d = t.path().join("spec");
+    fs::create_dir_all(&d).unwrap();
+    fs::write(
+        d.join("f.feature"),
+        "Feature: X\n\n  Scenario: Old name\n    Given a thing\n    Then it works\n",
+    )
+    .unwrap();
+    shalt_core::spec::rewrite_scenario(
+        &d,
+        "f.feature",
+        3,
+        "New name",
+        &["Given a widget".into(), "Then it is listed".into()],
+        None,
+    )
+    .unwrap();
+    let body = fs::read_to_string(d.join("f.feature")).unwrap();
+    assert!(body.contains("Scenario: New name"), "{body}");
+    assert!(body.contains("Given a widget"));
+    assert!(!body.contains("Old name"));
+    let rid = shalt_core::spec::stamp_scenario(&d, "f.feature", 3)
+        .unwrap()
+        .expect("rid");
+    assert!(rid.starts_with("S-"));
+    let body = fs::read_to_string(d.join("f.feature")).unwrap();
+    assert!(body.contains(&format!("@rid:{rid}")), "{body}");
+}
+
+#[test]
 fn holdouts_are_stripped_for_the_implementer_but_stay_in_the_ledger() {
     let t = TempDir::new().unwrap();
     let d = write_spec(t.path(), FEATURE);
@@ -416,6 +448,23 @@ fn a_role_cannot_rewrite_the_ledger() {
 }
 
 #[test]
+fn guarded_turn_backup_does_not_live_in_the_workspace() {
+    let t = TempDir::new().unwrap();
+    let ws = iso_workspace(t.path());
+    let mut backend = FnBackend {
+        f: |stage: &Path| {
+            fs::create_dir_all(stage.join("src")).unwrap();
+            fs::write(stage.join("src/ok.py"), "x = 1\n").unwrap();
+        },
+    };
+    run_role(&ws, "implementer", "p", &mut backend, false).unwrap();
+    assert!(
+        !ws.join(".shalt/backup").exists(),
+        "restore copies belong next to the stage, not in the project"
+    );
+}
+
+#[test]
 fn writing_only_to_its_own_zone_is_allowed() {
     let t = TempDir::new().unwrap();
     let ws = iso_workspace(t.path());
@@ -471,6 +520,45 @@ fn stepwright_sees_its_own_previous_steps_but_never_the_implementation() {
     let (zones, has_steps) = seen.lock().unwrap().clone();
     assert!(!zones.iter().any(|z| z == "src"), "the stepwright must not see the implementation");
     assert!(has_steps, "it must see its own previous work to revise it");
+}
+
+#[test]
+fn author_can_read_src_but_cannot_write_it() {
+    let t = TempDir::new().unwrap();
+    let ws = iso_workspace(t.path());
+    fs::write(ws.join("src/existing.py"), "VALUE = 7\n").unwrap();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(false));
+    let seen2 = seen.clone();
+    let mut backend = FnBackend {
+        f: move |stage: &Path| {
+            *seen2.lock().unwrap() = stage.join("src/existing.py").exists();
+            fs::create_dir_all(stage.join("spec")).unwrap();
+            fs::write(stage.join("spec/ok.feature"), "Feature: X\n  Scenario: Y\n    Given a\n").unwrap();
+            fs::create_dir_all(stage.join("src")).unwrap();
+            fs::write(stage.join("src/hack.py"), "nope\n").unwrap();
+        },
+    };
+    let err = run_role(&ws, "author", "p", &mut backend, false).unwrap_err();
+    assert!(seen.lock().unwrap().eq(&true), "author must see existing src/");
+    match err {
+        RoleError::Integrity(e) => assert!(e.offences.contains_key("src") || e.to_string().contains("src")),
+        other => panic!("{other}"),
+    }
+    assert!(!ws.join("src/hack.py").exists());
+    assert_eq!(fs::read_to_string(ws.join("src/existing.py")).unwrap(), "VALUE = 7\n");
+}
+
+#[test]
+fn ensure_workspace_does_not_clobber_existing_src() {
+    let t = TempDir::new().unwrap();
+    fs::create_dir_all(t.path().join("src")).unwrap();
+    fs::write(t.path().join("src/app.py"), "keep\n").unwrap();
+    fs::write(t.path().join("Cargo.toml"), "[package]\nname=\"x\"\nversion=\"0.1.0\"\n").unwrap();
+    assert_eq!(shalt_core::config::detect_stack(t.path()), "rust");
+    shalt_core::config::ensure_workspace(t.path(), "rust", "x").unwrap();
+    assert_eq!(fs::read_to_string(t.path().join("src/app.py")).unwrap(), "keep\n");
+    assert!(t.path().join("shalt.toml").exists());
+    assert!(t.path().join("spec").is_dir());
 }
 
 #[test]
@@ -612,9 +700,49 @@ fn overlay_auto_adds_and_unschedule_does_not_touch_spec() {
     board.sync_new_rids(&features);
     assert_eq!(board.items.len(), 2);
     let spec_before = fs::read_to_string(d.join("f.feature")).unwrap();
+    assert!(board.promote("S-00000001"));
+    assert_eq!(board.items.iter().find(|i| i.rid == "S-00000001").unwrap().rank, 0);
     assert!(board.unschedule("S-00000001"));
     assert_eq!(board.items.len(), 1);
     assert_eq!(fs::read_to_string(d.join("f.feature")).unwrap(), spec_before);
+}
+
+#[test]
+fn sprint_retro_measures_estimate_vs_spend() {
+    let mut board = Board::default();
+    let s = board.open_sprint("W38");
+    board.items.push(shalt_core::board::BoardItem {
+        rid: "S-1".into(),
+        rank: 1,
+        goal_id: None,
+        milestone_id: None,
+        sprint_id: Some(s.id.clone()),
+        token_estimate: 100_000,
+    });
+    board.items.push(shalt_core::board::BoardItem {
+        rid: "S-2".into(),
+        rank: 2,
+        goal_id: None,
+        milestone_id: None,
+        sprint_id: Some(s.id.clone()),
+        token_estimate: 100_000,
+    });
+    let mut q = JobQueue::default();
+    let j = q.enqueue(JobKind::Build, "p");
+    q.set_sprint(&j.id, &s.id);
+    q.add_tokens(&j.id, 80_000, 40_000);
+    let retro = shalt_core::tokens::retro(&board, &q.jobs, "p", &s.id).unwrap();
+    assert_eq!(retro.tickets, 2);
+    assert_eq!(retro.estimated, 200_000);
+    assert_eq!(retro.spent, 120_000);
+    assert_eq!(retro.accuracy, Some(0.6));
+    assert_eq!(retro.bias, -80_000);
+    assert!(board.close_sprint(&s.id, retro.estimated, retro.spent));
+    let scaled = shalt_core::tokens::suggest_estimate(&board);
+    assert!(
+        scaled < shalt_core::tokens::DEFAULT_TICKET_TOKENS,
+        "under-spend should lower the next estimate, got {scaled}"
+    );
 }
 
 #[test]
@@ -632,6 +760,7 @@ fn verify_fails_on_dangling_overlay_rid() {
         goal_id: None,
         milestone_id: None,
         sprint_id: None,
+        token_estimate: 0,
     });
     let drift = shalt_core::board::verify_drift(&board, &features);
     assert!(drift.iter().any(|p| p.contains("S-deadbeef")));
@@ -656,12 +785,103 @@ fn ui_registry_prunes_dead_pids() {
 }
 
 #[test]
+fn org_rename_and_remove_are_catalog_only() {
+    let t = TempDir::new().unwrap();
+    let proj = t.path().join("rivleterp");
+    fs::create_dir_all(&proj).unwrap();
+    let mut org = Org {
+        name: "local".into(),
+        projects: vec![],
+    };
+    let p = org.add(&proj).unwrap();
+    assert_eq!(p.name, "rivleterp");
+    assert!(org.rename(&p.id, "Rivlet ERP"));
+    assert_eq!(org.get(&p.id).unwrap().name, "Rivlet ERP");
+    assert!(!org.rename(&p.id, "   "), "empty name is rejected");
+    assert!(!org.rename("no-such", "X"));
+    assert!(org.remove(&p.id));
+    assert!(org.get(&p.id).is_none());
+    assert!(proj.exists(), "remove must not delete the git workspace");
+}
+
+#[test]
+fn org_pause_parks_running_jobs_not_waiting() {
+    let mut org = Org {
+        name: "local".into(),
+        projects: vec![],
+    };
+    let t = TempDir::new().unwrap();
+    let proj = t.path().join("p");
+    fs::create_dir_all(&proj).unwrap();
+    let p = org.add(&proj).unwrap();
+    assert!(!p.paused);
+    assert!(org.set_paused(&p.id, true));
+    assert!(org.get(&p.id).unwrap().paused);
+    let mut q = JobQueue::default();
+    let run = q.enqueue(JobKind::Author, &p.id);
+    let wait = q.enqueue(JobKind::Author, &p.id);
+    q.set_status(&run.id, JobStatus::Running);
+    q.set_status(&wait.id, JobStatus::Waiting);
+    let paused = q.pause_project(&p.id);
+    assert_eq!(paused, vec![run.id.clone()]);
+    assert_eq!(q.get(&run.id).unwrap().status, JobStatus::Paused);
+    assert_eq!(q.get(&wait.id).unwrap().status, JobStatus::Waiting);
+    assert_eq!(q.resumable_for_project(&p.id), vec![run.id]);
+}
+
+#[test]
+fn inbox_uses_the_latest_job_not_an_old_failure() {
+    let mut q = JobQueue::default();
+    let old = q.enqueue(JobKind::Author, "p");
+    q.set_status(&old.id, JobStatus::Failed);
+    q.set_error(&old.id, "old author failed");
+    let done = q.enqueue(JobKind::Steps, "p");
+    q.set_status(&done.id, JobStatus::Done);
+    let jobs: Vec<_> = q.jobs.iter().collect();
+    let st = shalt_core::jobs::summarize_jobs(&jobs, false);
+    assert_eq!(st.state, "idle", "a later done job must clear an old failure");
+
+    let build = q.enqueue(JobKind::Build, "p");
+    q.set_error(&build.id, "the test harness failed to run\nthe python stack needs pytest-bdd\n  python3 -m pip install pytest pytest-bdd");
+    q.set_status(&build.id, JobStatus::Failed);
+    let jobs: Vec<_> = q.jobs.iter().collect();
+    let st = shalt_core::jobs::summarize_jobs(&jobs, false);
+    assert_eq!(st.state, "failed");
+    assert_eq!(st.phase, "build");
+    assert!(
+        st.detail.contains("pytest-bdd") || st.detail.contains("pip install"),
+        "inbox must say why it failed, got {:?}",
+        st.detail
+    );
+}
+
+#[test]
+fn play_one_project_parks_the_other() {
+    let mut q = JobQueue::default();
+    let a = q.enqueue(JobKind::Author, "alpha");
+    let b = q.enqueue(JobKind::Author, "beta");
+    q.set_status(&a.id, JobStatus::Running);
+    q.set_status(&b.id, JobStatus::Pending);
+    assert_eq!(q.pause_project("alpha"), vec![a.id.clone()]);
+    assert_eq!(q.get(&a.id).unwrap().status, JobStatus::Paused);
+    assert_eq!(q.get(&b.id).unwrap().status, JobStatus::Pending);
+    assert_eq!(q.pause_project("beta"), vec![b.id.clone()]);
+    assert_eq!(q.get(&b.id).unwrap().status, JobStatus::Paused);
+    for id in q.resumable_for_project("alpha") {
+        q.set_status(&id, JobStatus::Running);
+    }
+    assert_eq!(q.get(&a.id).unwrap().status, JobStatus::Running);
+    assert_eq!(q.get(&b.id).unwrap().status, JobStatus::Paused);
+    assert!(q.get(&a.id).unwrap().log.contains("paused so another project can use the model"));
+}
+
+#[test]
 fn job_ask_waits_for_an_answer() {
     let t = TempDir::new().unwrap();
     let path = t.path().join("jobs.json");
     let mut q = JobQueue::default();
     let job = q.enqueue_full(JobKind::Author, "invoice", "do billing", "qwen", "qwen3.5:2b");
-    q.ask(&job.id, "Which currency?");
+    q.ask(&job.id, "Which currency?", "USD");
     q.save_to(&path).unwrap();
     let mut q2 = JobQueue::load_from(&path);
     assert_eq!(q2.jobs[0].status, JobStatus::Waiting);
@@ -669,6 +889,87 @@ fn job_ask_waits_for_an_answer() {
     q2.set_answer(&job.id, "USD");
     assert_eq!(q2.take_answer(&job.id).as_deref(), Some("USD"));
     assert_eq!(q2.jobs[0].status, JobStatus::Running);
+    assert_eq!(q2.jobs[0].turns.len(), 1);
+    assert_eq!(q2.jobs[0].turns[0].question, "Which currency?");
+    assert_eq!(q2.jobs[0].turns[0].answer, "USD");
+    assert_eq!(q2.jobs[0].turns[0].guess, "USD");
+}
+
+#[test]
+fn answering_a_turn_writes_the_plain_language_spec() {
+    let mut q = JobQueue::default();
+    let job = q.enqueue_full(
+        JobKind::Author,
+        "invoice",
+        "Build an ERP for manufacturers.",
+        "qwen",
+        "qwen",
+    );
+    q.ask(
+        &job.id,
+        "For bills of materials (BOMs), what should a typical example look like?",
+        "a bike",
+    );
+    q.append_chat(&job.id, "user", "Reference odoo");
+    q.append_chat(
+        &job.id,
+        "assistant",
+        "Odoo uses multi-level BOMs.\nANSWER: A BOM is a product plus components with quantity and unit. Components may themselves have BOMs.",
+    );
+    assert!(q.adopt_chat(&job.id, None));
+    let j = q.get(&job.id).unwrap();
+    assert!(j.prompt.contains("Build an ERP for manufacturers."));
+    assert!(j.prompt.contains("bills of materials"));
+    assert!(j.prompt.contains("Components may themselves have BOMs"));
+    assert!(j.turns[0].answer.contains("A BOM is a product"));
+    assert_eq!(j.status, JobStatus::Running);
+}
+
+#[test]
+fn fold_into_spec_replaces_the_same_heading() {
+    let once = shalt_core::jobs::fold_into_spec("Build an ERP.", "Which currency?", "USD");
+    let twice = shalt_core::jobs::fold_into_spec(&once, "Which currency?", "EUR");
+    assert!(twice.contains("EUR"), "{twice}");
+    assert!(!twice.contains("USD"), "{twice}");
+    assert!(twice.contains("Build an ERP."));
+}
+
+#[test]
+fn job_status_line_explains_waiting() {
+    let mut q = JobQueue::default();
+    let job = q.enqueue(JobKind::Author, "invoice");
+    q.ask(
+        &job.id,
+        "For bills of materials (BOMs), what should a typical example look like?",
+        "a bike frame with two wheels",
+    );
+    let j = q.get(&job.id).unwrap();
+    let line = shalt_core::jobs::status_line(j);
+    assert!(line.contains("Waiting for your answer"), "{line}");
+    assert!(line.contains("bills of materials"), "{line}");
+    assert!(j.log.contains("waiting on you:"), "{}", j.log);
+    assert!(
+        !j.log.contains("a bike frame"),
+        "guess is not the activity line: {}",
+        j.log
+    );
+}
+
+#[test]
+fn job_progress_keeps_heartbeats_not_file_dumps() {
+    assert!(shalt_core::jobs::progress_line("step 1: waiting on the model…"));
+    assert!(shalt_core::jobs::progress_line("still waiting on the model…"));
+    assert!(shalt_core::jobs::progress_line("contacting grok-4.5…"));
+    assert!(shalt_core::jobs::progress_line(
+        "[write_file] wrote spec/x.feature (12 bytes)"
+    ));
+    assert!(shalt_core::jobs::progress_line("waiting on you: For BOMs"));
+    assert!(!shalt_core::jobs::progress_line(
+        "[read_file] Feature: Money\n  Scenario: Add"
+    ));
+    assert!(!shalt_core::jobs::progress_line(
+        "Here is a long assistant essay about manufacturing."
+    ));
 }
 
 #[test]

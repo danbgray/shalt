@@ -172,8 +172,8 @@ pub fn run_role(
     let stage = parent.path().join(role);
     stage_for(&root, role, &stage, hide_holdouts)?;
     let before = snapshot(&stage, ALL_ZONES);
-    let backup = root.join(".shalt").join("backup");
-    let guard = GuardedTurn::enter(&root, role, &backup)?;
+    let backup = tempfile::Builder::new().prefix("shalt-backup-").tempdir()?;
+    let guard = GuardedTurn::enter(&root, role, backup.path())?;
     let transcript = backend.run(role, prompt, &stage).map_err(RoleError::Other)?;
 
     let mut offences = stage_offences(&stage, role);
