@@ -28,7 +28,7 @@ fn parse_existing_dir(s: &str) -> Result<PathBuf, String> {
     Ok(p)
 }
 const VALUE_FLAGS: &[&str] = &[
-    "--root", "--backend", "--fixtures", "--base-url", "--port",
+    "--root", "--backend", "--fixtures", "--base-url", "--port", "--color", "--by",
 ];
 
 #[derive(Parser)]
@@ -50,6 +50,9 @@ struct Cli {
     yes: bool,
     #[arg(long, global = true, default_value = "local")]
     by: String,
+    /// auto, always, never. NO_COLOR always wins.
+    #[arg(long, global = true, default_value = "auto")]
+    color: String,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -349,6 +352,7 @@ fn main() {
         }
     }
     let cli = Cli::parse_from(args);
+    term::init(&cli.color);
     let code = match run(cli) {
         Ok(c) => c,
         Err(c) => c,
@@ -518,15 +522,20 @@ fn run(cli: Cli) -> Result<i32, i32> {
                     .filter(|r| matches!(led.entries[*r].status.as_str(), RED | PENDING | STALE))
                     .cloned()
                     .collect();
-                println!("\nturn {turn}: {}/{} visible green", visible.len() - red_visible.len(), visible.len());
+                println!(
+                    "\nturn {turn}: {}/{} visible {}",
+                    visible.len() - red_visible.len(),
+                    visible.len(),
+                    term::ok("green")
+                );
                 if red_visible.is_empty() {
                     break;
                 }
                 match run_role(&root, "implementer", "Make the failing scenarios pass", b.as_mut(), true) {
                     Ok(res) => println!("  implementer wrote: {}", res.wrote.join(", ")),
                     Err(RoleError::Integrity(e)) => {
-                        println!("\nturn {turn} REJECTED -- {e}");
-                        println!("  nothing from this turn was kept; the spec and tests are untouched.");
+                        println!("\n{}", term::bad(&format!("turn {turn} REJECTED -- {e}")));
+                        println!("  {}", term::mute("nothing from this turn was kept; the spec and tests are untouched."));
                         if *strict {
                             return Ok(2);
                         }
@@ -547,7 +556,7 @@ fn run(cli: Cli) -> Result<i32, i32> {
                 .collect();
             let vis_green = visible.iter().all(|r| led.entries[r].status == GREEN);
             if vis_green && !overfit.is_empty() {
-                println!("OVERFIT: every visible scenario is green but held-out scenarios fail.");
+                println!("{}", term::bad("OVERFIT: every visible scenario is green but held-out scenarios fail."));
                 for r in &overfit {
                     println!("  {r}  {}", led.entries[r].name);
                 }
@@ -566,11 +575,11 @@ fn run(cli: Cli) -> Result<i32, i32> {
             let board = Board::load(&root.join(".shalt/board.json"));
             problems.extend(verify_drift(&board, &features));
             if problems.is_empty() {
-                println!("verify: ok");
+                println!("{}", term::ok("verify: ok"));
                 Ok(0)
             } else {
                 for p in &problems {
-                    println!("  {p}");
+                    println!("  {}", term::warn(p));
                 }
                 Ok(1)
             }
@@ -578,7 +587,12 @@ fn run(cli: Cli) -> Result<i32, i32> {
         Cmd::Tree => {
             let (led, features) = sync(&root)?;
             for f in features {
-                println!("STORY {}  {}", f.name, f.story().one_line());
+                println!(
+                    "{} {}  {}",
+                    term::keyword("STORY"),
+                    term::bold(&f.name),
+                    term::italic(&f.story().one_line())
+                );
                 for s in f.scenarios {
                     let st = s
                         .rid
@@ -586,8 +600,18 @@ fn run(cli: Cli) -> Result<i32, i32> {
                         .and_then(|r| led.entries.get(r))
                         .map(|e| e.status.as_str())
                         .unwrap_or(PENDING);
-                    let mark = if s.is_holdout() { " [holdout]" } else { "" };
-                    println!("   {} {} {}{}", status_glyph(st), s.name, s.rid.unwrap_or_default(), mark);
+                    let mark = if s.is_holdout() {
+                        format!(" {}", term::warn("[holdout]"))
+                    } else {
+                        String::new()
+                    };
+                    println!(
+                        "   {} {} {}{}",
+                        term::status(st, status_glyph(st)),
+                        s.name,
+                        term::mute(&s.rid.unwrap_or_default()),
+                        mark
+                    );
                 }
             }
             Ok(0)
@@ -597,9 +621,9 @@ fn run(cli: Cli) -> Result<i32, i32> {
             for f in features {
                 let st = f.story();
                 if st.complete() {
-                    println!("{}  {}", f.file, st.one_line());
+                    println!("{}  {}", term::mute(&f.file), term::italic(&st.one_line()));
                 } else {
-                    println!("{}  missing {}", f.file, st.missing().join(", "));
+                    println!("{}  {}", term::mute(&f.file), term::warn(&format!("missing {}", st.missing().join(", "))));
                 }
             }
             Ok(0)
@@ -1133,7 +1157,12 @@ fn cmd_ui_stop() -> Result<i32, i32> {
 
 fn print_models(models: &[shalt_core::ModelChoice]) {
     for (i, m) in models.iter().enumerate() {
-        println!("  {:>2}  {:<36} {}", i + 1, m.id, m.kind);
+        let kind = if m.kind == "local" {
+            term::ok(&m.kind)
+        } else {
+            term::accent(&m.kind)
+        };
+        println!("  {:>2}  {:<36} {}", i + 1, m.id, kind);
     }
 }
 
@@ -1246,16 +1275,16 @@ fn live_backend(cli: &Cli) -> Result<OpenAICompatBackend, i32> {
         eprintln!("{e}");
         1
     })?;
-    eprintln!("using {preset} / {}", b.model);
-    b.on_progress = Some(Box::new(|line| eprintln!("{line}")));
+    eprintln!("{} {} / {}", term::mute("using"), term::accent(&preset), term::accent(&b.model));
+    b.on_progress = Some(Box::new(|line| eprintln!("{}", term::progress(line))));
     if !cli.yes && io::stdin().is_terminal() {
         b.on_ask = Some(Box::new(|question: &str, guess: &str| {
             loop {
-                println!("\n? {question}");
+                println!("\n{}", term::accent(&format!("? {question}")));
                 if !guess.is_empty() {
-                    println!("  suggested: {guess}");
+                    println!("  {}", term::mute(&format!("suggested: {guess}")));
                 }
-                print!("> ");
+                print!("{} ", term::accent(">"));
                 let _ = io::stdout().flush();
                 let mut line = String::new();
                 io::stdin().lock().read_line(&mut line).map_err(|e| e.to_string())?;
@@ -1274,7 +1303,7 @@ fn prompt_yn(label: &str) -> Result<bool, i32> {
     let stdin = io::stdin();
     let mut stdout = io::stdout();
     loop {
-        print!("{label} [y/n] ");
+        print!("{} {} ", label, term::mute("[y/n]"));
         let _ = stdout.flush();
         let mut line = String::new();
         if stdin.lock().read_line(&mut line).is_err() {
@@ -1309,17 +1338,21 @@ fn review_scenarios(root: &Path) -> Result<usize, i32> {
         } else {
             lines.len()
         };
-        println!("\nFeature: {}  ({})", f.name, f.file);
+        println!(
+            "\n{}  ({})",
+            term::gherkin(&format!("Feature: {}", f.name)).trim_end(),
+            term::mute(&f.file)
+        );
         for (sc, start, end) in f.blocks(n) {
             let s = start.saturating_sub(1);
             let e = end.saturating_sub(1).min(n);
             let body = if s < e { lines[s..e].join("\n") } else { sc.name.clone() };
-            println!("\n{body}\n");
+            println!("\n{}\n", term::gherkin(&body));
             if prompt_yn("Keep this scenario?")? {
                 kept += 1;
             } else {
                 drop.push((f.file.clone(), start));
-                println!("  dropped.");
+                println!("  {}", term::bad("dropped."));
             }
         }
     }
@@ -1494,24 +1527,34 @@ fn status_glyph(st: &str) -> &'static str {
 
 fn print_status(led: &Ledger) {
     let s = led.summary();
+    let green = s.get("green").and_then(|v| v.as_i64()).unwrap_or(0);
+    let red = s.get("red").and_then(|v| v.as_i64()).unwrap_or(0);
+    let stale = s.get("stale").and_then(|v| v.as_i64()).unwrap_or(0);
+    let pending = s.get("pending").and_then(|v| v.as_i64()).unwrap_or(0);
+    let pct = s.get("completion_pct").and_then(|v| v.as_f64()).unwrap_or(0.0);
     println!(
         "[{}]  {}%  {} upheld / {} failing / {} stale / {} no test",
-        bar(s.get("green").and_then(|v| v.as_i64()).unwrap_or(0), s.get("total").and_then(|v| v.as_i64()).unwrap_or(0)),
-        s.get("completion_pct").and_then(|v| v.as_f64()).unwrap_or(0.0),
-        s.get("green").and_then(|v| v.as_i64()).unwrap_or(0),
-        s.get("red").and_then(|v| v.as_i64()).unwrap_or(0),
-        s.get("stale").and_then(|v| v.as_i64()).unwrap_or(0),
-        s.get("pending").and_then(|v| v.as_i64()).unwrap_or(0),
+        bar(green, s.get("total").and_then(|v| v.as_i64()).unwrap_or(0)),
+        pct,
+        term::ok(&green.to_string()),
+        term::bad(&red.to_string()),
+        term::warn(&stale.to_string()),
+        term::mute(&pending.to_string()),
     );
 }
 
 fn bar(green: i64, total: i64) -> String {
     let n: usize = 28;
     let filled = if total == 0 { 0 } else { (n as i64 * green / total) as usize };
-    format!("{}{}", "#".repeat(filled), "-".repeat(n.saturating_sub(filled)))
+    format!(
+        "{}{}",
+        term::ok(&"#".repeat(filled)),
+        term::mute(&"-".repeat(n.saturating_sub(filled)))
+    )
 }
 
 mod server;
+mod term;
 
 #[cfg(test)]
 mod arg_tests {
