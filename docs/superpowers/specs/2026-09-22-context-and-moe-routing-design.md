@@ -26,7 +26,7 @@ We already scaffold `src/` from `contract/interface.md` (`apply_js_contract_stub
 
 ## Non-goals (this slice)
 
-- Flash-as-classifier (`qwen3:0.6b` naming the gap). Optional later. Not a writer now.
+- Flash-as-classifier (`qwen3:0.6b` naming the gap without writing). Optional later. Flash *is* a writer now: three cheap tries, trash discarded.
 - Implementer brief beyond the gate “Build does not start until tests audit PASS.” Failure-digest + one stub is a follow-on.
 - Changing Envelope, auto-Play, yolo semantics (except: stepwright must not ask what step definitions look like).
 - Desk copy except the lane log line. Do not say “Gherkin” in the desk.
@@ -37,7 +37,7 @@ We already scaffold `src/` from `contract/interface.md` (`apply_js_contract_stub
 ## Key decisions
 
 1. **Shalt emits stubs. Models fill bodies.** Signatures come from the spec phrases. Bodies start as `return 'pending'` (JS) or equivalent rust pending. The filler does not choose files, invent phrases, or rewrite a working oracle.
-2. **Write pool is tool-capable only:** `qwen3.5:2b-mlx` → `qwen3:4b` → `qwen3:8b`. `qwen3:1.7b` only when 2B is not installed. Never `gemma3:*`, `qwen2.5:0.5b`, `llama3.2:1b`. If none of the write pool is installed, the job fails. It does not fall through to a toy model.
+2. **Write pool is tool-capable only:** `qwen3:0.6b` → `qwen3:1.7b` → `qwen3.5:2b-mlx` → `qwen3:4b` → `qwen3:8b`. Flash (0.6B/1.7B, >>200 tok/s) gets **three tries** on the same model; a trash write is discarded and does not become the oracle. Three flash passes are still cheaper than one local 27B generation. Never `gemma3:*`, `qwen2.5:0.5b`, `llama3.2:1b` (no tools). If none of the write pool is installed, the job fails.
 3. **Packed brief, not a dump.** Size-class system prompt (~200 tokens at 2B, short essay at 8B). First user message is the brief. It does not include `Files you can see:` or the cheat-sheet `function (not arrow)`.
 4. **Canned few-shot from shalt**, not a sibling file in the project. A corrupt `recipes.steps.js` must not become the example.
 5. **Thin stage.** Stepwright sees: the one steps file, `world.js`, the one feature file, `contract/interface.md`. Other step files are not copied in.
@@ -64,7 +64,7 @@ A tests job:
 
 ```
 focus journey
-    → pin writer (2b-mlx, else 4b, else 8b, else 1.7b)
+    → pin writer (0.6b, else 1.7b, else 2b-mlx, else 4b, else 8b)
     → quarantine exact-duplicate step files
     → stubber (signatures + pending bodies)
     → thin stage + brief
@@ -185,7 +185,7 @@ Desk / job log: `lane · write · {model} · {class}` with `{parse, bind, behavi
 
 Build / Run are not enqueued while `steps_needed` is true. Audit FAIL or timeout leaves gate `tests`.
 
-`pin_inner_loop` uses `pick_fast_model` on `WRITE_MODELS`. If the job already holds a write-pool model, keep it. If it holds gemma / 0.5b / 0.6b / 27B, pin down to the write pool before the first fill.
+`pin_inner_loop` uses `pick_fast_model` on `WRITE_MODELS`. If the job already holds a write-pool model, keep it. If it holds gemma / 0.5b / 27B, pin to the write pool (0.6B first when installed) before the first fill.
 
 ## Data flow
 
@@ -226,7 +226,8 @@ All shalt-core. No live Ollama. Fixture backend. Do not mutate the Recipe projec
 
 **Alloc**
 
-- Installed `{0.6b, 2b-mlx, 8b, gemma3:1b}` → `pick_fast_model` is `qwen3.5:2b-mlx`
+- Installed `{0.6b, 2b-mlx, 8b, gemma3:1b}` → `pick_fast_model` is `qwen3:0.6b`
+- `flash_retry(0.6b, 1..2)` is true; `flash_retry(0.6b, 3)` is false; `flash_retry(2b-mlx, 1)` is false
 - Same without 2b-mlx → `qwen3:4b`, else `qwen3:8b`, else `qwen3:1.7b`
 - `pick_escalate_model(2b-mlx)` → 4b → 8b → `None`
 - Only gemma / 0.5b installed → `pick_fast_model` is `None`

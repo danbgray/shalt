@@ -623,12 +623,12 @@ fn execute_steps(job_id: &str) -> Result<String, String> {
     let mut transcript = String::new();
     #[allow(unused_assignments)]
     let mut bound_after = bound_before;
-    let mut parse_retries = 0usize;
-    let mut bind_hops = 0usize;
+    let mut tries = 0usize;
     loop {
         if let Err(e) = wait_if_parked(job_id) {
             return finish_err(job_id, &e);
         }
+        tries += 1;
         let backup = std::fs::read_to_string(root.join(&target)).ok();
         match run_role_or_failover(&job, &root, "stepwright", &prompt, false) {
             Ok(res) => {
@@ -637,14 +637,20 @@ fn execute_steps(job_id: &str) -> Result<String, String> {
                     if let Some(prev) = &backup {
                         let _ = std::fs::write(root.join(&target), prev);
                     }
-                    parse_retries += 1;
-                    if parse_retries <= 1 {
-                        let mut q = JobQueue::load();
-                        q.append(job_id, &format!("lane · write · {} · parse", job.model));
-                        let _ = q.save();
-                        if job.model.contains("2b") || !escalate_writer(&mut job) {
-                            // stay on 2B for the retry
-                        }
+                    let mut q = JobQueue::load();
+                    q.append(job_id, &format!("lane · write · {} · parse", job.model));
+                    let _ = q.save();
+                    if crate::alloc::flash_retry(&job.model, tries) {
+                        prompt = stepwright_brief(
+                            &root,
+                            &journey,
+                            &job.model,
+                            "Previous write did not parse. Fill pending bodies. Do not paste the prompt.",
+                        );
+                        continue;
+                    }
+                    if escalate_writer(&mut job) {
+                        tries = 0;
                         prompt = stepwright_brief(
                             &root,
                             &journey,
@@ -658,11 +664,22 @@ fn execute_steps(job_id: &str) -> Result<String, String> {
                 let defs_after = crate::bindings::load_step_defs(&root);
                 bound_after = crate::bindings::bound_count(&features, &defs_after, &journey);
                 if bound_after <= bound_before {
-                    bind_hops += 1;
-                    if bind_hops <= 2 && escalate_writer(&mut job) {
-                        let mut q = JobQueue::load();
-                        q.append(job_id, &format!("lane · write · {} · bind", job.model));
-                        let _ = q.save();
+                    let mut q = JobQueue::load();
+                    q.append(job_id, &format!("lane · write · {} · bind", job.model));
+                    let _ = q.save();
+                    if crate::alloc::flash_retry(&job.model, tries) {
+                        prompt = stepwright_brief(
+                            &root,
+                            &journey,
+                            &job.model,
+                            &format!(
+                                "Pending bodies are not a bind. Fill the Given/When/Then for `{journey}` so each scenario has a real oracle."
+                            ),
+                        );
+                        continue;
+                    }
+                    if escalate_writer(&mut job) {
+                        tries = 0;
                         prompt = stepwright_brief(
                             &root,
                             &journey,
@@ -697,11 +714,20 @@ fn execute_steps(job_id: &str) -> Result<String, String> {
                 if let Some(prev) = &backup {
                     let _ = std::fs::write(root.join(&target), prev);
                 }
-                parse_retries += 1;
-                if parse_retries <= 1 && escalate_writer(&mut job) {
-                    let mut q = JobQueue::load();
-                    q.append(job_id, &format!("lane · write · {} · parse", job.model));
-                    let _ = q.save();
+                let mut q = JobQueue::load();
+                q.append(job_id, &format!("lane · write · {} · parse", job.model));
+                let _ = q.save();
+                if crate::alloc::flash_retry(&job.model, tries) {
+                    prompt = stepwright_brief(
+                        &root,
+                        &journey,
+                        &job.model,
+                        &format!("Previous pass was rejected: {e}. Fill bodies in `{target}` only."),
+                    );
+                    continue;
+                }
+                if escalate_writer(&mut job) {
+                    tries = 0;
                     prompt = stepwright_brief(
                         &root,
                         &journey,

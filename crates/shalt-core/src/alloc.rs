@@ -332,31 +332,36 @@ pub enum Lane {
     Review,
 }
 
-/// Sub-2B models measured well over 200 tok/s. Not writers — no tools / too small.
+/// Measured >>200 tok/s on this Mac with thinking off. Gemma / 0.5b have no tools.
 pub const FLASH_MODELS: &[&str] = &[
     "qwen3:0.6b",
+    "qwen3:1.7b",
     "qwen2.5:0.5b",
     "gemma3:1b",
     "llama3.2:1b",
     "gemma3:270m",
 ];
 
-/// Tool-capable fillers. Escalate in this order. Never gemma / 0.5b / 0.6b.
+/// Tool-capable flash: cheap first tries. Three attempts still beat one 27B pass.
+pub const FLASH_WRITE_MODELS: &[&str] = &["qwen3:0.6b", "qwen3:1.7b"];
+
+/// Tries on the same flash writer before escalating. Trash is discarded each time.
+pub const FLASH_ATTEMPTS: usize = 3;
+
+/// Tool-capable fillers. Flash first, then 2B/4B/8B. Never gemma / 0.5b.
 pub const WRITE_MODELS: &[&str] = &[
+    "qwen3:0.6b",
+    "qwen3:1.7b",
     "qwen3.5:2b-mlx",
     "qwen3:4b",
     "qwen3:8b",
 ];
 
-/// Only when none of WRITE_MODELS is installed. Never an escalate hop after 8B.
-pub const WRITE_FALLBACK: &str = "qwen3:1.7b";
-
-/// Ctx/timeout class: write pool plus aliases. Not an escalate tail.
+/// Ctx/timeout class: mid writers plus aliases.
 pub const FAST_MODELS: &[&str] = &[
     "qwen3.5:2b-mlx",
     "qwen3:4b",
     "qwen3:8b",
-    "qwen3:1.7b",
     "qwen3.5:2b",
     "qwen2.5:3b",
 ];
@@ -381,7 +386,16 @@ pub fn is_flash_model(id: &str) -> bool {
 }
 
 pub fn is_write_model(id: &str) -> bool {
-    WRITE_MODELS.iter().any(|m| *m == id) || id == WRITE_FALLBACK
+    WRITE_MODELS.iter().any(|m| *m == id)
+}
+
+pub fn is_flash_writer(id: &str) -> bool {
+    FLASH_WRITE_MODELS.iter().any(|m| *m == id)
+}
+
+/// Stay on this flash model for another try. Mid writers escalate immediately.
+pub fn flash_retry(model: &str, attempts: usize) -> bool {
+    is_flash_writer(model) && attempts < FLASH_ATTEMPTS
 }
 
 pub fn local_num_ctx(model: &str) -> u32 {
@@ -434,9 +448,6 @@ pub fn pick_fast_model(installed: &[String]) -> Option<(String, String)> {
             return Some(("qwen".into(), (*id).to_string()));
         }
     }
-    if installed.iter().any(|have| have == WRITE_FALLBACK) {
-        return Some(("qwen".into(), WRITE_FALLBACK.to_string()));
-    }
     None
 }
 
@@ -463,12 +474,12 @@ pub fn pick_audit_model(installed: &[String]) -> Option<(String, String)> {
     None
 }
 
-/// Next writer after `current` (2b → 4b → 8b). None after 8B. Never 1.7B or gemma.
+/// Next writer after `current` (0.6 → 1.7 → 2b → 4b → 8b). None after 8B. Never gemma.
 pub fn pick_escalate_model(installed: &[String], current: &str) -> Option<(String, String)> {
     if !is_write_model(current) {
         return pick_fast_model(installed);
     }
-    let mut seen = current.is_empty() || current == WRITE_FALLBACK;
+    let mut seen = current.is_empty();
     for id in WRITE_MODELS {
         if *id == current {
             seen = true;
@@ -520,7 +531,7 @@ mod lane_tests {
     }
 
     #[test]
-    fn write_pool_skips_flash_and_gemma() {
+    fn write_pool_starts_at_flash_and_skips_gemma() {
         let installed = vec![
             "qwen3.8:27b-mlx".into(),
             "qwen3.5:2b-mlx".into(),
@@ -530,26 +541,25 @@ mod lane_tests {
             "gemma3:1b".into(),
             "qwen2.5:0.5b".into(),
         ];
-        let pick = pick_fast_model(&installed).expect("2b");
-        assert_eq!(pick.1, "qwen3.5:2b-mlx");
-        assert!(!is_write_model("qwen3:0.6b"));
+        let pick = pick_fast_model(&installed).expect("flash");
+        assert_eq!(pick.1, "qwen3:0.6b");
+        assert!(is_write_model("qwen3:0.6b"));
+        assert!(is_flash_writer("qwen3:0.6b"));
         assert!(!is_write_model("gemma3:1b"));
+        assert!(!is_flash_writer("gemma3:1b"));
         assert!(is_flash_model("qwen3:0.6b"));
-        assert!(!is_flash_model("qwen3.5:2b-mlx"));
         assert_eq!(local_num_ctx("qwen3:0.6b"), 4096);
-        let next = pick_escalate_model(&installed, "qwen3.5:2b-mlx").expect("8b");
-        assert_eq!(next.1, "qwen3:8b");
+        assert!(flash_retry("qwen3:0.6b", 1));
+        assert!(flash_retry("qwen3:0.6b", 2));
+        assert!(!flash_retry("qwen3:0.6b", 3));
+        assert!(!flash_retry("qwen3.5:2b-mlx", 1));
+        let next = pick_escalate_model(&installed, "qwen3:0.6b").expect("1.7b");
+        assert_eq!(next.1, "qwen3:1.7b");
+        let mid = pick_escalate_model(&installed, "qwen3:1.7b").expect("2b");
+        assert_eq!(mid.1, "qwen3.5:2b-mlx");
+        let eight = pick_escalate_model(&installed, "qwen3.5:2b-mlx").expect("8b");
+        assert_eq!(eight.1, "qwen3:8b");
         assert!(pick_escalate_model(&installed, "qwen3:8b").is_none());
-        assert!(pick_escalate_model(&installed, "qwen3:0.6b").is_some());
-    }
-
-    #[test]
-    fn one_seven_only_when_write_pool_missing() {
-        let only_small = vec!["qwen3:0.6b".into(), "qwen3:1.7b".into(), "gemma3:1b".into()];
-        assert_eq!(pick_fast_model(&only_small).expect("fb").1, "qwen3:1.7b");
-        let with_4b = vec!["qwen3:1.7b".into(), "qwen3:4b".into()];
-        assert_eq!(pick_fast_model(&with_4b).expect("4b").1, "qwen3:4b");
-        assert!(pick_escalate_model(&only_small, "qwen3:1.7b").is_none());
     }
 
     #[test]
