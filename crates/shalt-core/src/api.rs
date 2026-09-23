@@ -839,10 +839,35 @@ pub fn unload_local_except(keep: &str) {
         }
         let body = json!({ "model": name, "keep_alive": 0 });
         let _ = ureq::post("http://127.0.0.1:11434/api/generate")
-            .timeout(Duration::from_secs(4))
+            .timeout(Duration::from_secs(30))
             .set("Content-Type", "application/json")
             .send_json(body);
+        for _ in 0..40 {
+            if !ollama_model_loaded(name) {
+                break;
+            }
+            thread::sleep(Duration::from_millis(500));
+        }
     }
+}
+
+fn ollama_model_loaded(name: &str) -> bool {
+    let Ok(r) = ureq::get("http://127.0.0.1:11434/api/ps")
+        .timeout(Duration::from_secs(2))
+        .call()
+    else {
+        return false;
+    };
+    let Ok(v) = r.into_json::<Value>() else {
+        return false;
+    };
+    v.get("models")
+        .and_then(|m| m.as_array())
+        .map(|arr| {
+            arr.iter()
+                .any(|m| m.get("name").and_then(|n| n.as_str()) == Some(name))
+        })
+        .unwrap_or(false)
 }
 
 /// Load `model` at the capped context and pin it. Unload 27B so flash writers are not starved.
