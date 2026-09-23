@@ -818,6 +818,30 @@ pub fn ollama_leave_loaded(name: &str) -> bool {
     name.contains("35b-128k")
 }
 
+/// 27B/35B still in VRAM. Poking them with generate(keep_alive:0) keeps them resident.
+pub fn heavy_review_loaded() -> bool {
+    let Ok(r) = ureq::get("http://127.0.0.1:11434/api/ps")
+        .timeout(Duration::from_secs(2))
+        .call()
+    else {
+        return false;
+    };
+    let Ok(v) = r.into_json::<Value>() else {
+        return false;
+    };
+    v.get("models")
+        .and_then(|m| m.as_array())
+        .map(|arr| {
+            arr.iter().any(|m| {
+                let name = m.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                let gb = m.get("size").and_then(|s| s.as_u64()).unwrap_or(0) as f64 / 1e9;
+                gb >= 8.0
+                    && (name.contains("27b") || name.contains("35b"))
+            })
+        })
+        .unwrap_or(false)
+}
+
 /// Drop loaded Ollama models except `keep` and protected 35B-128k.
 pub fn unload_local_except(keep: &str) {
     let Ok(r) = ureq::get("http://127.0.0.1:11434/api/ps")
@@ -835,6 +859,10 @@ pub fn unload_local_except(keep: &str) {
     for m in models {
         let name = m.get("name").and_then(|n| n.as_str()).unwrap_or("");
         if name.is_empty() || name == keep || ollama_leave_loaded(name) {
+            continue;
+        }
+        // generate() on 27B to "unload" it actually keeps the runner alive.
+        if name.contains("27b") || name.contains("35b") {
             continue;
         }
         let body = json!({ "model": name, "prompt": "", "keep_alive": 0 });

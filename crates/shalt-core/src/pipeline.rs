@@ -1146,7 +1146,9 @@ fn set_job_lane(job: &mut Job, backend: &str, model: &str, line: &str) {
 /// Writers stay on the tiny local model. 27B is loaded only for an audit pass.
 fn pin_inner_loop(job: &mut Job) {
     let installed = installed_local();
-    let Some((backend, model)) = crate::alloc::pick_fast_model(&installed) else {
+    let skip_flash = crate::api::heavy_review_loaded();
+    let Some((backend, model)) = crate::alloc::pick_fast_model_filtered(&installed, skip_flash)
+    else {
         crate::api::keep_local_model(&job.model);
         return;
     };
@@ -1184,7 +1186,10 @@ fn continue_write_chain(job: &mut Job, fills: usize, secs: f64, completion: i64)
 
 fn escalate_writer(job: &mut Job) -> bool {
     let installed = installed_local();
-    let Some((backend, model)) = crate::alloc::pick_escalate_model(&installed, &job.model) else {
+    let skip_flash = crate::api::heavy_review_loaded();
+    let Some((backend, model)) =
+        crate::alloc::pick_escalate_model_filtered(&installed, &job.model, skip_flash)
+    else {
         return false;
     };
     set_job_lane(

@@ -435,12 +435,25 @@ pub fn lane_for_build_turn(_turn: usize) -> Lane {
 }
 
 pub fn pick_fast_model(installed: &[String]) -> Option<(String, String)> {
-    for id in WRITE_MODELS {
-        if installed.iter().any(|have| have == id) {
-            return Some(("qwen".into(), (*id).to_string()));
-        }
-    }
-    None
+    pick_fast_model_filtered(installed, false)
+}
+
+/// When a 27B/35B is still resident, flash writers only stall. Start at 2B+.
+pub fn pick_fast_model_filtered(
+    installed: &[String],
+    skip_flash: bool,
+) -> Option<(String, String)> {
+    let pick = |skip: bool| {
+        WRITE_MODELS.iter().find(|id| {
+            if skip && is_flash_writer(id) {
+                return false;
+            }
+            installed.iter().any(|have| have == *id)
+        })
+    };
+    pick(skip_flash)
+        .or_else(|| pick(false))
+        .map(|id| ("qwen".into(), (*id).to_string()))
 }
 
 pub fn pick_review_model(installed: &[String], grok_ready: bool) -> (String, String) {
@@ -468,13 +481,24 @@ pub fn pick_audit_model(installed: &[String]) -> Option<(String, String)> {
 
 /// Next writer after `current` (0.6 → 1.7 → 2b → 4b → 8b). None after 8B. Never gemma.
 pub fn pick_escalate_model(installed: &[String], current: &str) -> Option<(String, String)> {
+    pick_escalate_model_filtered(installed, current, false)
+}
+
+pub fn pick_escalate_model_filtered(
+    installed: &[String],
+    current: &str,
+    skip_flash: bool,
+) -> Option<(String, String)> {
     if !is_write_model(current) {
-        return pick_fast_model(installed);
+        return pick_fast_model_filtered(installed, skip_flash);
     }
     let mut seen = current.is_empty();
     for id in WRITE_MODELS {
         if *id == current {
             seen = true;
+            continue;
+        }
+        if seen && skip_flash && is_flash_writer(id) {
             continue;
         }
         if seen && installed.iter().any(|have| have == id) {
@@ -535,6 +559,8 @@ mod lane_tests {
         ];
         let pick = pick_fast_model(&installed).expect("flash");
         assert_eq!(pick.1, "qwen3:0.6b");
+        let blocked = pick_fast_model_filtered(&installed, true).expect("mid");
+        assert_eq!(blocked.1, "qwen3.5:2b-mlx");
         assert!(is_write_model("qwen3:0.6b"));
         assert!(is_flash_writer("qwen3:0.6b"));
         assert!(!is_write_model("gemma3:1b"));
@@ -543,6 +569,8 @@ mod lane_tests {
         assert_eq!(local_num_ctx("qwen3:0.6b"), 4096);
         let next = pick_escalate_model(&installed, "qwen3:0.6b").expect("1.7b");
         assert_eq!(next.1, "qwen3:1.7b");
+        let skip = pick_escalate_model_filtered(&installed, "qwen3:0.6b", true).expect("2b");
+        assert_eq!(skip.1, "qwen3.5:2b-mlx");
         let mid = pick_escalate_model(&installed, "qwen3:1.7b").expect("2b");
         assert_eq!(mid.1, "qwen3.5:2b-mlx");
         let eight = pick_escalate_model(&installed, "qwen3.5:2b-mlx").expect("8b");
