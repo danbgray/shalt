@@ -1132,10 +1132,8 @@ fn pin_inner_loop(job: &mut Job) {
         crate::api::keep_local_model(&job.model);
         return;
     };
-    if crate::alloc::is_write_model(&job.model) {
-        crate::api::keep_local_model(&job.model);
-        return;
-    }
+    // Each tests/build job starts at the cheap end. Failures hop up. Do not
+    // keep 1.7B from a previous fail and skip 0.6B.
     set_job_lane(
         job,
         &backend,
