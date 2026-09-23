@@ -342,13 +342,10 @@ pub const FLASH_MODELS: &[&str] = &[
     "gemma3:270m",
 ];
 
-/// Tool-capable flash: cheap first tries. Three attempts still beat one 27B pass.
+/// Tool-capable flash (ctx class). Retry count is measured, not a constant.
 pub const FLASH_WRITE_MODELS: &[&str] = &["qwen3:0.6b", "qwen3:1.7b"];
 
-/// Tries on the same flash writer before escalating. Trash is discarded each time.
-pub const FLASH_ATTEMPTS: usize = 3;
-
-/// Tool-capable fillers. Flash first, then 2B/4B/8B. Never gemma / 0.5b.
+/// Tool-capable fillers. List order is a prior; measured tok/s can override later.
 pub const WRITE_MODELS: &[&str] = &[
     "qwen3:0.6b",
     "qwen3:1.7b",
@@ -391,11 +388,6 @@ pub fn is_write_model(id: &str) -> bool {
 
 pub fn is_flash_writer(id: &str) -> bool {
     FLASH_WRITE_MODELS.iter().any(|m| *m == id)
-}
-
-/// Stay on this flash model for another try. Mid writers escalate immediately.
-pub fn flash_retry(model: &str, attempts: usize) -> bool {
-    is_flash_writer(model) && attempts < FLASH_ATTEMPTS
 }
 
 pub fn local_num_ctx(model: &str) -> u32 {
@@ -549,10 +541,6 @@ mod lane_tests {
         assert!(!is_flash_writer("gemma3:1b"));
         assert!(is_flash_model("qwen3:0.6b"));
         assert_eq!(local_num_ctx("qwen3:0.6b"), 4096);
-        assert!(flash_retry("qwen3:0.6b", 1));
-        assert!(flash_retry("qwen3:0.6b", 2));
-        assert!(!flash_retry("qwen3:0.6b", 3));
-        assert!(!flash_retry("qwen3.5:2b-mlx", 1));
         let next = pick_escalate_model(&installed, "qwen3:0.6b").expect("1.7b");
         assert_eq!(next.1, "qwen3:1.7b");
         let mid = pick_escalate_model(&installed, "qwen3:1.7b").expect("2b");

@@ -29,6 +29,7 @@ pub mod reports;
 pub mod roles;
 pub mod runner;
 pub mod scaffold;
+pub mod speed;
 pub mod spec;
 pub mod sprint;
 pub mod tags;

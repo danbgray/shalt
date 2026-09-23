@@ -564,8 +564,12 @@ impl OpenAICompatBackend {
                     };
                     self.note_usage(&data);
                     if self.local() {
+                        let secs = t0.elapsed().as_secs_f64();
                         if let Some(rate) = ollama_eval_rate(&data) {
                             self.emit(&format!("{rate:.0} tok/s · {}", self.model));
+                            crate::speed::record(&self.model, rate, secs);
+                        } else if secs > 0.0 {
+                            crate::speed::record(&self.model, 0.0, secs);
                         }
                     }
                     return Ok(data);

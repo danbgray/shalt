@@ -12,6 +12,7 @@ use crate::runner::{failure_digest, harness_report, run_suite};
 use crate::spec::{holdout_rids, load_specs, stamp_rids};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stage {
@@ -630,8 +631,10 @@ fn execute_steps(job_id: &str) -> Result<String, String> {
         }
         tries += 1;
         let backup = std::fs::read_to_string(root.join(&target)).ok();
+        let t0 = Instant::now();
         match run_role_or_failover(&job, &root, "stepwright", &prompt, false) {
             Ok(res) => {
+                let secs = t0.elapsed().as_secs_f64();
                 let body = std::fs::read_to_string(root.join(&target)).unwrap_or_default();
                 if !crate::scaffold::steps_source_ok(&target, &body) {
                     if let Some(prev) = &backup {
@@ -640,17 +643,7 @@ fn execute_steps(job_id: &str) -> Result<String, String> {
                     let mut q = JobQueue::load();
                     q.append(job_id, &format!("lane · write · {} · parse", job.model));
                     let _ = q.save();
-                    if crate::alloc::flash_retry(&job.model, tries) {
-                        prompt = stepwright_brief(
-                            &root,
-                            &journey,
-                            &job.model,
-                            "Previous write did not parse. Fill pending bodies. Do not paste the prompt.",
-                        );
-                        continue;
-                    }
-                    if escalate_writer(&mut job) {
-                        tries = 0;
+                    if stay_on_writer(&mut job, &mut tries, secs, res.completion_tokens) {
                         prompt = stepwright_brief(
                             &root,
                             &journey,
@@ -667,19 +660,7 @@ fn execute_steps(job_id: &str) -> Result<String, String> {
                     let mut q = JobQueue::load();
                     q.append(job_id, &format!("lane · write · {} · bind", job.model));
                     let _ = q.save();
-                    if crate::alloc::flash_retry(&job.model, tries) {
-                        prompt = stepwright_brief(
-                            &root,
-                            &journey,
-                            &job.model,
-                            &format!(
-                                "Pending bodies are not a bind. Fill the Given/When/Then for `{journey}` so each scenario has a real oracle."
-                            ),
-                        );
-                        continue;
-                    }
-                    if escalate_writer(&mut job) {
-                        tries = 0;
+                    if stay_on_writer(&mut job, &mut tries, secs, res.completion_tokens) {
                         prompt = stepwright_brief(
                             &root,
                             &journey,
@@ -711,23 +692,14 @@ fn execute_steps(job_id: &str) -> Result<String, String> {
                 break;
             }
             Err(RoleError::Integrity(e)) => {
+                let secs = t0.elapsed().as_secs_f64();
                 if let Some(prev) = &backup {
                     let _ = std::fs::write(root.join(&target), prev);
                 }
                 let mut q = JobQueue::load();
                 q.append(job_id, &format!("lane · write · {} · parse", job.model));
                 let _ = q.save();
-                if crate::alloc::flash_retry(&job.model, tries) {
-                    prompt = stepwright_brief(
-                        &root,
-                        &journey,
-                        &job.model,
-                        &format!("Previous pass was rejected: {e}. Fill bodies in `{target}` only."),
-                    );
-                    continue;
-                }
-                if escalate_writer(&mut job) {
-                    tries = 0;
+                if stay_on_writer(&mut job, &mut tries, secs, 0) {
                     prompt = stepwright_brief(
                         &root,
                         &journey,
@@ -1172,6 +1144,25 @@ fn pin_inner_loop(job: &mut Job) {
     );
 }
 
+fn auditor_model() -> String {
+    crate::alloc::pick_audit_model(&installed_local())
+        .map(|(_, m)| m)
+        .unwrap_or_else(|| crate::api::DEFAULT_QWEN_MODEL.to_string())
+}
+
+/// Stay on this writer if another measured fill still fits in one auditor pass.
+fn stay_on_writer(job: &mut Job, tries: &mut usize, secs: f64, completion: i64) -> bool {
+    crate::speed::record_fill(&job.model, secs, completion);
+    if crate::speed::retry_same_writer(&job.model, &auditor_model(), *tries, secs) {
+        return true;
+    }
+    if escalate_writer(job) {
+        *tries = 0;
+        return true;
+    }
+    false
+}
+
 fn escalate_writer(job: &mut Job) -> bool {
     let installed = installed_local();
     let Some((backend, model)) = crate::alloc::pick_escalate_model(&installed, &job.model) else {
@@ -1217,6 +1208,7 @@ fn run_audit(
     let mut q = JobQueue::load();
     q.append(&job.id, &format!("audit · {role}"));
     let _ = q.save();
+    let t0 = Instant::now();
     let result = match backend_for_job(job) {
         Ok(mut backend) => run_role(root, role, &prompt, &mut backend, false),
         Err(e) => {
@@ -1229,6 +1221,12 @@ fn run_audit(
             return Err(e);
         }
     };
+    let audit_secs = t0.elapsed().as_secs_f64();
+    if let Ok(res) = &result {
+        crate::speed::record_fill(&model, audit_secs, res.completion_tokens);
+    } else if audit_secs > 0.0 {
+        crate::speed::record(&model, 0.0, audit_secs);
+    }
     set_job_lane(
         job,
         &writer_b,
