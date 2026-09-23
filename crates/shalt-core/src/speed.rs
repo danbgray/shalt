@@ -78,7 +78,10 @@ pub fn record(model: &str, tok_s: f64, secs: f64) {
 }
 
 pub fn record_fill(model: &str, secs: f64, completion: i64) {
-    let tok_s = if secs > 0.0 && completion > 0 {
+    if completion <= 0 {
+        return;
+    }
+    let tok_s = if secs > 0.0 {
         completion as f64 / secs
     } else {
         0.0
@@ -157,5 +160,13 @@ mod tests {
         let w = s(10.0, 100.0);
         let a = s(25.0, 80.0);
         assert_eq!(fill_budget(100.0, Some(&w), Some(&a)), 1);
+    }
+
+    #[test]
+    fn a_stall_duration_must_not_be_used_as_fill_time() {
+        let w = s(247.0, 1.4);
+        let a = s(22.0, 90.0);
+        assert_eq!(fill_budget(0.0, Some(&w), Some(&a)), 64);
+        assert_eq!(fill_budget(31.0, Some(&w), Some(&a)), 2);
     }
 }

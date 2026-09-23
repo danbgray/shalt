@@ -837,11 +837,21 @@ pub fn unload_local_except(keep: &str) {
         if name.is_empty() || name == keep || ollama_leave_loaded(name) {
             continue;
         }
-        let body = json!({ "model": name, "keep_alive": 0 });
+        let body = json!({ "model": name, "prompt": "", "keep_alive": 0 });
         let _ = ureq::post("http://127.0.0.1:11434/api/generate")
             .timeout(Duration::from_secs(30))
             .set("Content-Type", "application/json")
             .send_json(body);
+        let chat = json!({
+            "model": name,
+            "messages": [],
+            "keep_alive": 0,
+            "stream": false,
+        });
+        let _ = ureq::post("http://127.0.0.1:11434/api/chat")
+            .timeout(Duration::from_secs(15))
+            .set("Content-Type", "application/json")
+            .send_json(chat);
         for _ in 0..40 {
             if !ollama_model_loaded(name) {
                 break;

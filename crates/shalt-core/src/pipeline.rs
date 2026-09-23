@@ -1172,7 +1172,8 @@ fn continue_write_chain(job: &mut Job, fills: usize, secs: f64, completion: i64)
     crate::speed::record_fill(&job.model, secs, completion);
     let auditor = auditor_model();
     let have_audit = crate::speed::sample(&auditor).is_some();
-    if have_audit && !crate::speed::another_fill_fits(fills, secs, &job.model, &auditor) {
+    let budget_secs = if completion > 0 { secs } else { 0.0 };
+    if have_audit && !crate::speed::another_fill_fits(fills, budget_secs, &job.model, &auditor) {
         return false;
     }
     if escalate_writer(job) {
