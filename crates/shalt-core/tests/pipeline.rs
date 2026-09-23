@@ -504,6 +504,31 @@ fn failed_build_still_chains_play() {
 }
 
 #[test]
+fn mixed_step_failures_are_not_a_spin() {
+    let _g = HOME.lock().unwrap();
+    let home = TempDir::new().unwrap();
+    std::env::set_var("SHALT_HOME", home.path());
+    let mut q = JobQueue::load();
+    for err in [
+        "xAI refused the request: this team is out of credits or hit its spending limit.",
+        "xAI refused the request: this team is out of credits or hit its spending limit.",
+        "stepwright wrote steps/patrons.steps.js but bound no new scenarios in `patrons`",
+    ] {
+        let j = q.enqueue_full(JobKind::Steps, "recipe", "", "qwen", "qwen3:1.7b");
+        q.set_status(&j.id, JobStatus::Failed);
+        q.set_error(&j.id, err);
+        q.append(&j.id, &format!("failed: {err}"));
+    }
+    q.save().unwrap();
+    let last = q.jobs.last().cloned().unwrap();
+    assert!(
+        play_chains_after(&last),
+        "credit fails then a no-bind fail must not idle Play"
+    );
+    std::env::remove_var("SHALT_HOME");
+}
+
+#[test]
 fn compile_dump_in_step_harness_rewrites_steps_not_src() {
     let _g = HOME.lock().unwrap();
     let home = TempDir::new().unwrap();

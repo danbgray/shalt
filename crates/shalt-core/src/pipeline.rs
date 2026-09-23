@@ -1150,18 +1150,19 @@ fn auditor_model() -> String {
         .unwrap_or_else(|| crate::api::DEFAULT_QWEN_MODEL.to_string())
 }
 
-/// On failure: hop up the write chain if another fill still fits in one auditor pass.
-/// N is measured (tok/s and wall time), not a constant. Same-model spam is not the policy.
+/// On failure hop up the write chain. N is measured. No auditor sample yet:
+/// walk the remaining writers once so a missing 27B sample cannot strand us on 1.7B.
 fn continue_write_chain(job: &mut Job, fills: usize, secs: f64, completion: i64) -> bool {
     crate::speed::record_fill(&job.model, secs, completion);
-    if !crate::speed::another_fill_fits(fills, secs, &job.model, &auditor_model()) {
+    let auditor = auditor_model();
+    let have_audit = crate::speed::sample(&auditor).is_some();
+    if have_audit && !crate::speed::another_fill_fits(fills, secs, &job.model, &auditor) {
         return false;
     }
     if escalate_writer(job) {
         return true;
     }
-    // Top of the chain (8B). Extra budget repeats there, still not a magic count.
-    true
+    have_audit && crate::speed::another_fill_fits(fills, secs, &job.model, &auditor)
 }
 
 fn escalate_writer(job: &mut Job) -> bool {
@@ -1507,15 +1508,38 @@ pub fn play_stop_reason(job: &Job) -> Option<String> {
     None
 }
 
+fn failure_key(job: &Job) -> String {
+    let e = format!("{}\n{}", job.error, job.log).to_ascii_lowercase();
+    if e.contains("does not support tools") {
+        return "no-tools".into();
+    }
+    if e.contains("bound no new") {
+        return "no-bind".into();
+    }
+    if e.contains("did not parse") {
+        return "parse".into();
+    }
+    if e.contains("out of credits") || e.contains("spending limit") {
+        return "credits".into();
+    }
+    e.chars().filter(|c| c.is_ascii_alphanumeric() || *c == ' ').take(80).collect()
+}
+
+/// Same stage, same failure, three times. Mixed errors (credits then no-bind) are not a spin.
 fn spinning_failures(job: &Job) -> bool {
+    let key = failure_key(job);
+    if key.is_empty() {
+        return false;
+    }
     let q = JobQueue::load();
     let n = q
         .jobs
         .iter()
         .rev()
         .filter(|j| j.project_id == job.project_id && j.kind == job.kind)
-        .take(3)
         .filter(|j| j.status == JobStatus::Failed)
+        .take(3)
+        .filter(|j| failure_key(j) == key)
         .count();
     n >= 3
 }

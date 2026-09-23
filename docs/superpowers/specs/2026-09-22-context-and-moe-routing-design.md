@@ -227,7 +227,7 @@ All shalt-core. No live Ollama. Fixture backend. Do not mutate the Recipe projec
 **Alloc**
 
 - Installed `{0.6b, 2b-mlx, 8b, gemma3:1b}` → `pick_fast_model` is `qwen3:0.6b`
-- Fill budget: unknown → 2; 5s fill vs 90s audit → 18; 1000 tok/s vs 25 → 40. Failures hop 0.6→1.7→2b→4b→8b. No `FLASH_ATTEMPTS`.
+- Fill budget: unknown → walk the remaining write chain (do not strand on 1.7B). Measured: 5s vs 90s → 18; 1000 tok/s vs 25 → 40. Failures hop 0.6→1.7→2b→4b→8b. Stepwright does not get `ask_human`. Three mixed stage fails are not a Play spin — only the same failure three times.
 - Same without 2b-mlx → `qwen3:4b`, else `qwen3:8b`, else `qwen3:1.7b`
 - `pick_escalate_model(2b-mlx)` → 4b → 8b → `None`
 - Only gemma / 0.5b installed → `pick_fast_model` is `None`

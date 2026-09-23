@@ -335,14 +335,18 @@ pub fn dispatch(stage: &Path, name: &str, args: &Value) -> String {
     }
 }
 
-fn tools_json() -> Value {
-    json!([
-        {"type":"function","function":{"name":"list_files","description":"List every file you can see, with its size in bytes.","parameters":{"type":"object","properties":{},"required":[]}}},
-        {"type":"function","function":{"name":"read_file","description":"Read one file.","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}},
-        {"type":"function","function":{"name":"write_file","description":"Create or overwrite one file with the complete content.","parameters":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}}},
-        {"type":"function","function":{"name":"done","description":"Call this when the work is complete.","parameters":{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"]}}},
-        {"type":"function","function":{"name":"ask_human","description":"Ask the human one clarifying question. Always include a concrete guess they can accept or edit.","parameters":{"type":"object","properties":{"question":{"type":"string","description":"One question, in plain language."},"guess":{"type":"string","description":"Your best concrete answer: a typical example, default, or recommended choice. Always provide one."}},"required":["question","guess"]}}}
-    ])
+fn tools_json(role: &str) -> Value {
+    let mut tools = vec![
+        json!({"type":"function","function":{"name":"list_files","description":"List every file you can see, with its size in bytes.","parameters":{"type":"object","properties":{},"required":[]}}}),
+        json!({"type":"function","function":{"name":"read_file","description":"Read one file.","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}}),
+        json!({"type":"function","function":{"name":"write_file","description":"Create or overwrite one file with the complete content.","parameters":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}}}),
+        json!({"type":"function","function":{"name":"done","description":"Call this when the work is complete.","parameters":{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"]}}}),
+    ];
+    // Fillers and auditors do not interview. Asking burns the step budget on yolo guesses.
+    if !matches!(role, "stepwright" | "auditor" | "code_auditor") {
+        tools.push(json!({"type":"function","function":{"name":"ask_human","description":"Ask the human one clarifying question. Always include a concrete guess they can accept or edit.","parameters":{"type":"object","properties":{"question":{"type":"string","description":"One question, in plain language."},"guess":{"type":"string","description":"Your best concrete answer: a typical example, default, or recommended choice. Always provide one."}},"required":["question","guess"]}}}));
+    }
+    json!(tools)
 }
 
 pub struct OpenAICompatBackend {
@@ -1508,7 +1512,7 @@ impl Backend for OpenAICompatBackend {
             let payload = self.with_local_runtime(json!({
                 "model": self.model,
                 "messages": messages,
-                "tools": tools_json(),
+                "tools": tools_json(role),
                 "tool_choice": "auto",
                 "temperature": 0.0,
             }));
@@ -1561,6 +1565,9 @@ impl Backend for OpenAICompatBackend {
                 let result = if fn_obj.get("arguments").and_then(|a| a.as_str()).map(|s| serde_json::from_str::<Value>(s).is_err()).unwrap_or(false) {
                     "ERROR: arguments were not valid JSON".into()
                 } else if fname == "ask_human" {
+                    if matches!(role, "stepwright" | "auditor" | "code_auditor") {
+                        "Do not ask. Fill pending bodies in the one file in the brief, then done().".into()
+                    } else {
                     let q = args.get("question").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
                     if q.is_empty() {
                         "ERROR: question is required".into()
@@ -1575,6 +1582,7 @@ impl Backend for OpenAICompatBackend {
                             Ok(a) => a,
                             Err(e) => return Err(e),
                         }
+                    }
                     }
                 } else {
                     let result = dispatch(stage, fname, &args);
