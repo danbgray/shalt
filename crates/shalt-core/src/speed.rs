@@ -1,4 +1,4 @@
-//! Measured decode speed. Retry and pick from samples, not a magic try count.
+//! Measured decode speed. How many fills fit in one auditor pass — not a try count.
 
 use crate::org::Org;
 use serde::{Deserialize, Serialize};
@@ -86,30 +86,13 @@ pub fn record_fill(model: &str, secs: f64, completion: i64) {
     record(model, tok_s, secs);
 }
 
-/// Another fill on `writer` after `attempts` already ran.
-///
-/// No magic count. One try always happens in the caller. A second try is
-/// taken when we have no comparison yet (so we measure) or the writer is
-/// faster than the auditor. Further tries only while another fill still
-/// fits inside one measured auditor pass.
-pub fn retry_same_writer(writer: &str, auditor: &str, attempts: usize, last_secs: f64) -> bool {
-    retry_with(
-        sample(writer).as_ref(),
-        sample(auditor).as_ref(),
-        attempts,
-        last_secs,
-    )
-}
-
-pub fn retry_with(
+/// How many fills fit in one auditor pass. Measured. 1000 tok/s vs 25 → 40.
+/// Unknown → 2 (more than one, so we measure). Never a constant like 3.
+pub fn fill_budget(
+    last_secs: f64,
     writer: Option<&SpeedSample>,
     auditor: Option<&SpeedSample>,
-    attempts: usize,
-    last_secs: f64,
-) -> bool {
-    if attempts == 0 {
-        return true;
-    }
+) -> usize {
     let fill = if last_secs > 0.0 {
         last_secs
     } else {
@@ -118,22 +101,22 @@ pub fn retry_with(
     let audit = auditor.map(|s| s.secs).unwrap_or(0.0);
     let w_rate = writer.map(|s| s.tok_s).unwrap_or(0.0);
     let a_rate = auditor.map(|s| s.tok_s).unwrap_or(0.0);
+    if fill > 0.0 && audit > 0.0 {
+        return ((audit / fill).floor() as usize).max(1);
+    }
+    if w_rate > 0.0 && a_rate > 0.0 {
+        return ((w_rate / a_rate).floor() as usize).max(1);
+    }
+    2
+}
 
-    let faster = if w_rate > 0.0 && a_rate > 0.0 {
-        w_rate > a_rate
-    } else if fill > 0.0 && audit > 0.0 {
-        fill < audit
-    } else {
-        // No comparison yet: one extra try so we have a measurement, then hop.
-        return attempts < 2;
-    };
-    if !faster {
-        return false;
-    }
-    if audit > 0.0 && fill > 0.0 {
-        return (attempts as f64 + 1.0) * fill < audit;
-    }
-    attempts < 2
+pub fn fill_budget_for(writer: &str, auditor: &str, last_secs: f64) -> usize {
+    fill_budget(last_secs, sample(writer).as_ref(), sample(auditor).as_ref())
+}
+
+/// Room for another fill after `fills` already ran.
+pub fn another_fill_fits(fills: usize, last_secs: f64, writer: &str, auditor: &str) -> bool {
+    fills < fill_budget_for(writer, auditor, last_secs)
 }
 
 #[cfg(test)]
@@ -145,39 +128,34 @@ mod tests {
     }
 
     #[test]
-    fn unknown_speeds_get_one_extra_try_then_stop() {
-        assert!(retry_with(None, None, 1, 4.0));
-        assert!(!retry_with(None, None, 2, 4.0));
+    fn unknown_speeds_budget_is_more_than_one() {
+        assert_eq!(fill_budget(4.0, None, None), 2);
     }
 
     #[test]
-    fn slower_writer_does_not_retry() {
-        assert!(!retry_with(
-            Some(&s(10.0, 100.0)),
-            Some(&s(25.0, 80.0)),
-            1,
-            100.0
-        ));
-    }
-
-    #[test]
-    fn faster_writer_retries_while_another_fill_fits_in_one_audit() {
+    fn budget_is_audit_time_over_fill_time() {
         let w = s(250.0, 5.0);
         let a = s(22.0, 90.0);
-        assert!(retry_with(Some(&w), Some(&a), 1, 5.0));
-        assert!(retry_with(Some(&w), Some(&a), 8, 5.0));
-        // 17 * 5 = 85 < 90; 18 * 5 = 90 is not strictly inside.
-        assert!(retry_with(Some(&w), Some(&a), 16, 5.0));
-        assert!(!retry_with(Some(&w), Some(&a), 17, 5.0));
-        // 3 is not a policy: (3+1)*5=20 < 90, so it retries because the clock says so.
-        assert!(retry_with(Some(&w), Some(&a), 3, 5.0));
+        assert_eq!(fill_budget(5.0, Some(&w), Some(&a)), 18);
     }
 
     #[test]
-    fn tok_s_alone_allows_a_second_try_when_faster() {
-        let w = s(250.0, 0.0);
-        let a = s(22.0, 0.0);
-        assert!(retry_with(Some(&w), Some(&a), 1, 0.0));
-        assert!(!retry_with(Some(&w), Some(&a), 2, 0.0));
+    fn a_thousand_tok_s_buys_more_fills_than_two_hundred() {
+        let flash = s(1000.0, 0.0);
+        let mid = s(200.0, 0.0);
+        let audit = s(25.0, 0.0);
+        assert_eq!(fill_budget(0.0, Some(&flash), Some(&audit)), 40);
+        assert_eq!(fill_budget(0.0, Some(&mid), Some(&audit)), 8);
+        assert!(
+            fill_budget(0.0, Some(&flash), Some(&audit))
+                > fill_budget(0.0, Some(&mid), Some(&audit))
+        );
+    }
+
+    #[test]
+    fn slower_than_one_audit_is_a_single_fill() {
+        let w = s(10.0, 100.0);
+        let a = s(25.0, 80.0);
+        assert_eq!(fill_budget(100.0, Some(&w), Some(&a)), 1);
     }
 }

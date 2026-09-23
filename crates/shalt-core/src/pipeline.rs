@@ -643,7 +643,7 @@ fn execute_steps(job_id: &str) -> Result<String, String> {
                     let mut q = JobQueue::load();
                     q.append(job_id, &format!("lane · write · {} · parse", job.model));
                     let _ = q.save();
-                    if stay_on_writer(&mut job, &mut tries, secs, res.completion_tokens) {
+                    if continue_write_chain(&mut job, tries, secs, res.completion_tokens) {
                         prompt = stepwright_brief(
                             &root,
                             &journey,
@@ -660,7 +660,7 @@ fn execute_steps(job_id: &str) -> Result<String, String> {
                     let mut q = JobQueue::load();
                     q.append(job_id, &format!("lane · write · {} · bind", job.model));
                     let _ = q.save();
-                    if stay_on_writer(&mut job, &mut tries, secs, res.completion_tokens) {
+                    if continue_write_chain(&mut job, tries, secs, res.completion_tokens) {
                         prompt = stepwright_brief(
                             &root,
                             &journey,
@@ -699,7 +699,7 @@ fn execute_steps(job_id: &str) -> Result<String, String> {
                 let mut q = JobQueue::load();
                 q.append(job_id, &format!("lane · write · {} · parse", job.model));
                 let _ = q.save();
-                if stay_on_writer(&mut job, &mut tries, secs, 0) {
+                if continue_write_chain(&mut job, tries, secs, 0) {
                     prompt = stepwright_brief(
                         &root,
                         &journey,
@@ -1150,17 +1150,18 @@ fn auditor_model() -> String {
         .unwrap_or_else(|| crate::api::DEFAULT_QWEN_MODEL.to_string())
 }
 
-/// Stay on this writer if another measured fill still fits in one auditor pass.
-fn stay_on_writer(job: &mut Job, tries: &mut usize, secs: f64, completion: i64) -> bool {
+/// On failure: hop up the write chain if another fill still fits in one auditor pass.
+/// N is measured (tok/s and wall time), not a constant. Same-model spam is not the policy.
+fn continue_write_chain(job: &mut Job, fills: usize, secs: f64, completion: i64) -> bool {
     crate::speed::record_fill(&job.model, secs, completion);
-    if crate::speed::retry_same_writer(&job.model, &auditor_model(), *tries, secs) {
-        return true;
+    if !crate::speed::another_fill_fits(fills, secs, &job.model, &auditor_model()) {
+        return false;
     }
     if escalate_writer(job) {
-        *tries = 0;
         return true;
     }
-    false
+    // Top of the chain (8B). Extra budget repeats there, still not a magic count.
+    true
 }
 
 fn escalate_writer(job: &mut Job) -> bool {

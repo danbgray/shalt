@@ -37,7 +37,7 @@ We already scaffold `src/` from `contract/interface.md` (`apply_js_contract_stub
 ## Key decisions
 
 1. **Shalt emits stubs. Models fill bodies.** Signatures come from the spec phrases. Bodies start as `return 'pending'` (JS) or equivalent rust pending. The filler does not choose files, invent phrases, or rewrite a working oracle.
-2. **Write pool is tool-capable only:** `qwen3:0.6b` → `qwen3:1.7b` → `qwen3.5:2b-mlx` → `qwen3:4b` → `qwen3:8b`. Never `gemma3:*`, `qwen2.5:0.5b`, `llama3.2:1b` (no tools). Retry is **measured**, not a magic count: record tok/s and fill wall time; stay on the same writer while another fill still fits inside one measured auditor pass. No comparison yet → one extra try so we measure, then hop. A slower writer does not retry. Trash is discarded and does not become the oracle. If none of the write pool is installed, the job fails.
+2. **Write pool is tool-capable only:** `qwen3:0.6b` → `qwen3:1.7b` → `qwen3.5:2b-mlx` → `qwen3:4b` → `qwen3:8b`. Never `gemma3:*`, `qwen2.5:0.5b`, `llama3.2:1b` (no tools). **N is measured:** `floor(auditor_pass / last_fill)` or `floor(writer_tok_s / auditor_tok_s)` — 1000 tok/s buys more fills than 200. Unknown → 2 so we measure. **Each failure hops up the chain.** Do not sit on 0.6B repeating. At 8B, leftover budget can repeat there. Trash is discarded. If none of the write pool is installed, the job fails.
 3. **Packed brief, not a dump.** Size-class system prompt (~200 tokens at 2B, short essay at 8B). First user message is the brief. It does not include `Files you can see:` or the cheat-sheet `function (not arrow)`.
 4. **Canned few-shot from shalt**, not a sibling file in the project. A corrupt `recipes.steps.js` must not become the example.
 5. **Thin stage.** Stepwright sees: the one steps file, `world.js`, the one feature file, `contract/interface.md`. Other step files are not copied in.
@@ -227,7 +227,7 @@ All shalt-core. No live Ollama. Fixture backend. Do not mutate the Recipe projec
 **Alloc**
 
 - Installed `{0.6b, 2b-mlx, 8b, gemma3:1b}` → `pick_fast_model` is `qwen3:0.6b`
-- Retry: unknown speeds → one extra try; writer 5s vs auditor 90s → keep going until another fill would not fit; writer slower than auditor → no extra try. No constant try count.
+- Fill budget: unknown → 2; 5s fill vs 90s audit → 18; 1000 tok/s vs 25 → 40. Failures hop 0.6→1.7→2b→4b→8b. No `FLASH_ATTEMPTS`.
 - Same without 2b-mlx → `qwen3:4b`, else `qwen3:8b`, else `qwen3:1.7b`
 - `pick_escalate_model(2b-mlx)` → 4b → 8b → `None`
 - Only gemma / 0.5b installed → `pick_fast_model` is `None`
