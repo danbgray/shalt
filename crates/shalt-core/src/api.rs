@@ -813,7 +813,12 @@ pub fn ollama_reachable() -> bool {
         .is_ok()
 }
 
-/// Drop every loaded Ollama model except `keep` so a 27B review is unencumbered.
+/// Other-session 35B-128k. Writers may unload 27B; they must not drop this one.
+pub fn ollama_leave_loaded(name: &str) -> bool {
+    name.contains("35b-128k")
+}
+
+/// Drop loaded Ollama models except `keep` and protected 35B-128k.
 pub fn unload_local_except(keep: &str) {
     let Ok(r) = ureq::get("http://127.0.0.1:11434/api/ps")
         .timeout(Duration::from_secs(2))
@@ -829,7 +834,7 @@ pub fn unload_local_except(keep: &str) {
     };
     for m in models {
         let name = m.get("name").and_then(|n| n.as_str()).unwrap_or("");
-        if name.is_empty() || name == keep {
+        if name.is_empty() || name == keep || ollama_leave_loaded(name) {
             continue;
         }
         let body = json!({ "model": name, "keep_alive": 0 });
@@ -840,21 +845,19 @@ pub fn unload_local_except(keep: &str) {
     }
 }
 
-/// Load `model` at the capped context and pin it. Review models unload the rest first.
+/// Load `model` at the capped context and pin it. Unload 27B so flash writers are not starved.
 pub fn keep_local_model(model: &str) {
     if model.trim().is_empty() {
         return;
     }
-    if !crate::alloc::is_fast_model(model) {
-        unload_local_except(model);
-    }
+    unload_local_except(model);
     let body = json!({
         "model": model,
         "keep_alive": crate::alloc::LOCAL_KEEP_ALIVE,
         "stream": false,
         "options": { "num_ctx": crate::alloc::local_num_ctx(model) },
     });
-    let wait = if crate::alloc::is_fast_model(model) { 8 } else { 45 };
+    let wait = if crate::alloc::is_fast_model(model) { 20 } else { 45 };
     let _ = ureq::post("http://127.0.0.1:11434/api/generate")
         .timeout(Duration::from_secs(wait))
         .set("Content-Type", "application/json")
@@ -1358,6 +1361,13 @@ mod key_tests {
         assert!(args[0].contains("already written"), "{}", args[0]);
         assert!(args[1].contains("already written"), "{}", args[1]);
         assert!(args[2].contains(&"x".repeat(4000)), "latest write stays full");
+    }
+
+    #[test]
+    fn leave_the_35b_128k_session_loaded() {
+        assert!(ollama_leave_loaded("qwen3.5:35b-128k"));
+        assert!(!ollama_leave_loaded("qwen3.8:27b-mlx"));
+        assert!(!ollama_leave_loaded("qwen3:0.6b"));
     }
 
     #[test]

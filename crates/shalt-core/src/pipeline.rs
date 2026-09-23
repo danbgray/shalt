@@ -710,7 +710,25 @@ fn execute_steps(job_id: &str) -> Result<String, String> {
                 }
                 return finish_err(job_id, &e.to_string());
             }
-            Err(e) => return finish_err(job_id, &e.to_string()),
+            Err(e) => {
+                let secs = t0.elapsed().as_secs_f64();
+                let msg = e.to_string();
+                if crate::compose::looks_like_local_stall(&msg) {
+                    let mut q = JobQueue::load();
+                    q.append(job_id, &format!("lane · write · {} · stall", job.model));
+                    let _ = q.save();
+                    if continue_write_chain(&mut job, tries, secs, 0) {
+                        prompt = stepwright_brief(
+                            &root,
+                            &journey,
+                            &job.model,
+                            "Previous model stalled. Fill pending bodies in the one file.",
+                        );
+                        continue;
+                    }
+                }
+                return finish_err(job_id, &msg);
+            }
         }
     }
     let mut audit_round = 0usize;
@@ -1516,6 +1534,9 @@ fn failure_key(job: &Job) -> String {
     }
     if e.contains("did not parse") {
         return "parse".into();
+    }
+    if e.contains("didn't respond in time") || e.contains("timed out") || e.contains("timeout") {
+        return "stall".into();
     }
     if e.contains("out of credits") || e.contains("spending limit") {
         return "credits".into();

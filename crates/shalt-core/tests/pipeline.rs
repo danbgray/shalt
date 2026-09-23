@@ -529,6 +529,28 @@ fn mixed_step_failures_are_not_a_spin() {
 }
 
 #[test]
+fn one_local_stall_still_chains_play() {
+    let _g = HOME.lock().unwrap();
+    let home = TempDir::new().unwrap();
+    std::env::set_var("SHALT_HOME", home.path());
+    let mut q = JobQueue::load();
+    let j = q.enqueue_full(JobKind::Steps, "recipe", "", "qwen", "qwen3:0.6b");
+    q.set_status(&j.id, JobStatus::Failed);
+    q.set_error(
+        &j.id,
+        "The model didn't respond in time. If this was a local model, Ollama may be busy.",
+    );
+    q.append(&j.id, "failed: The model didn't respond in time.");
+    q.save().unwrap();
+    let last = q.get(&j.id).cloned().unwrap();
+    assert!(
+        play_chains_after(&last),
+        "one stall must hop/chain, not idle Play"
+    );
+    std::env::remove_var("SHALT_HOME");
+}
+
+#[test]
 fn compile_dump_in_step_harness_rewrites_steps_not_src() {
     let _g = HOME.lock().unwrap();
     let home = TempDir::new().unwrap();
