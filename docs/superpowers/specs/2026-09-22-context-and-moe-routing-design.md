@@ -42,7 +42,7 @@ We already scaffold `src/` from `contract/interface.md` (`apply_js_contract_stub
 4. **Canned few-shot from shalt**, not a sibling file in the project. A corrupt `recipes.steps.js` must not become the example.
 5. **Thin stage.** Stepwright sees: the one steps file, `world.js`, the one feature file, `contract/interface.md`. Other step files are not copied in.
 6. **Ambiguous is not bound.** Two non-stub definitions for the same phrase do not count as bound. Pending / empty / `not implemented` is already not bound.
-7. **Exact-duplicate step files are quarantined** to `steps/.dup/` (rust: not applicable; one harness file). Not deleted. `list_step_files` skips `.dup/`.
+7. **Exact-duplicate step files are quarantined** to `.shalt/dup-steps/` (outside `steps/`, so `cucumber-js --import steps/**/*.js` cannot see them). Not deleted. `list_step_files` skips `dup-steps` / `.dup`. Rust: one harness file, no quarantine.
 8. **27B test audit is fail-closed** and runs **before** any `src/` write. Timeout or missing review model: do not enqueue Run/Build. Gate stays `tests`.
 9. **Escalate by failure class**, not by “wrote files, bound 0, try the next name on a list.” Stop after 8B.
 10. **Board agents stay labels.** The inner loop is this chain. Do not pretend a ticket assigned `grok-4` is what writes tests.
@@ -65,8 +65,8 @@ A tests job:
 ```
 focus journey
     → pin writer (2b-mlx, else 4b, else 8b, else 1.7b)
-    → stubber (signatures + pending bodies)
     → quarantine exact-duplicate step files
+    → stubber (signatures + pending bodies)
     → thin stage + brief
     → filler (bodies only)
     → parse → bind → 27B audit
@@ -119,7 +119,7 @@ Keep: pending / `todo!` / empty body / `not implemented` → `stub: true` → no
 
 New: a phrase with **two or more** non-stub definitions is **ambiguous**. `def_matches` for bind requires **exactly one** non-stub definition. Ambiguous ≠ bound.
 
-Exact duplicate files (byte-for-byte, or the same non-empty phrase set as another step file) are moved to `steps/.dup/<filename>` before the filler runs. Deterministic. No model. `list_step_files` and `load_step_defs` skip `.dup/`.
+Exact duplicate files (byte-for-byte, or the same non-empty phrase set as another step file) are moved to `.shalt/dup-steps/<filename>` **before** the stubber runs. Deterministic. No model. `list_step_files` and `load_step_defs` skip `.dup` / `dup-steps`. Putting copies under `steps/.dup/` would still be imported by cucumber-js.
 
 `steps_needed` is true when the focus journey has any scenario that is not bound under these rules, including garbage and ambiguous files.
 
@@ -243,7 +243,7 @@ All shalt-core. No live Ollama. Fixture backend. Do not mutate the Recipe projec
 
 - `return 'pending'` is not bound
 - Two non-stub defs for the same phrase → not bound
-- Exact-duplicate file → `steps/.dup/`, bind uses the original only
+- Exact-duplicate file → `.shalt/dup-steps/`, bind uses the original only
 
 **Brief + stage**
 
@@ -266,7 +266,7 @@ All shalt-core. No live Ollama. Fixture backend. Do not mutate the Recipe projec
 | `crates/shalt-core/src/alloc.rs` | `WRITE_MODELS`, pick/escalate, no toy tail |
 | `crates/shalt-core/src/scaffold.rs` | Step stubs, garbage replace, phrase dedupe |
 | `crates/shalt-core/src/bindings.rs` | Ambiguous ≠ bound; skip `.dup/` |
-| `crates/shalt-core/src/runner.rs` | `list_step_files` skips `.dup/` |
+| `crates/shalt-core/src/runner.rs` | `list_step_files` skips `.dup` / `dup-steps` |
 | `crates/shalt-core/src/roles.rs` | Thin stage for focused stepwright |
 | `crates/shalt-core/src/brief.rs` | New. Size-class prompts + packed user brief |
 | `crates/shalt-core/src/api.rs` | Use brief instead of tree dump on write pool; keep native ctx |

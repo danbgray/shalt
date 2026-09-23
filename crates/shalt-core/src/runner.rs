@@ -47,29 +47,62 @@ fn empty_run() -> SuiteRun {
     }
 }
 
-pub fn steps_has_tests(steps: &Path) -> bool {
-    if !steps.exists() {
+fn is_step_source(path: &Path) -> bool {
+    let name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    if name == "conftest.py" || name.starts_with('.') {
         return false;
+    }
+    matches!(
+        path.extension().and_then(|s| s.to_str()),
+        Some("py" | "rs" | "js" | "ts" | "jsx" | "tsx" | "java" | "rb" | "cs" | "go")
+    )
+}
+
+pub fn steps_has_tests(steps: &Path) -> bool {
+    !list_step_files_under(steps).is_empty()
+}
+
+/// Step-source files under `steps`, relative to `root` (e.g. `tests/shalt.rs`).
+pub fn list_step_files(root: &Path, steps_rel: &str) -> Vec<String> {
+    let steps = root.join(steps_rel);
+    let root_c = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    list_step_files_under(&steps)
+        .into_iter()
+        .filter_map(|p| {
+            let abs = p.canonicalize().ok()?;
+            let rel = abs.strip_prefix(&root_c).ok()?;
+            Some(rel.to_string_lossy().replace('\\', "/"))
+        })
+        .collect()
+}
+
+fn list_step_files_under(steps: &Path) -> Vec<std::path::PathBuf> {
+    if !steps.exists() {
+        return vec![];
     }
     let Ok(rd) = walkdir::WalkDir::new(steps)
         .into_iter()
         .collect::<Result<Vec<_>, _>>()
     else {
-        return false;
+        return vec![];
     };
-    rd.into_iter().any(|e| {
-        if !e.file_type().is_file() {
-            return false;
-        }
-        let name = e.file_name().to_string_lossy();
-        if name == "conftest.py" || name.starts_with('.') {
-            return false;
-        }
-        matches!(
-            e.path().extension().and_then(|s| s.to_str()),
-            Some("py" | "rs" | "js" | "ts" | "jsx" | "tsx" | "java" | "rb" | "cs" | "go")
-        )
-    })
+    let mut out: Vec<_> = rd
+        .into_iter()
+        .filter(|e| {
+            e.file_type().is_file()
+                && is_step_source(e.path())
+                && !e.path().components().any(|c| {
+                    let s = c.as_os_str();
+                    s == ".dup" || s == "dup-steps"
+                })
+        })
+        .map(|e| e.into_path())
+        .collect();
+    out.sort();
+    out
 }
 
 fn python_has_module(interp: &str, module: &str) -> bool {
@@ -90,6 +123,22 @@ fn pytest_interp(cmd: &str) -> &str {
 }
 
 pub fn run_suite(root: &Path, cfg: &Config) -> SuiteRun {
+    run_suite_with(root, cfg, &[])
+}
+
+fn shell_quote(s: &str) -> String {
+    if s.is_empty() {
+        return "''".into();
+    }
+    if s.chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/' | ':' | '='))
+    {
+        return s.to_string();
+    }
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+pub fn run_suite_with(root: &Path, cfg: &Config, extra: &[String]) -> SuiteRun {
     let has_toml = root.join("shalt.toml").exists();
     if !has_toml && !root.join("spec").exists() {
         return failed_run(format!(
@@ -97,11 +146,13 @@ pub fn run_suite(root: &Path, cfg: &Config) -> SuiteRun {
             root.display()
         ));
     }
-    if cfg.command.contains("pytest") {
-        let steps = root.join(&cfg.steps);
-        if !steps_has_tests(&steps) {
-            return empty_run();
-        }
+    let steps = root.join(&cfg.steps);
+    let javascript = cfg.stack == "javascript" || cfg.command.contains("cucumber-js");
+    let python = cfg.stack == "python" || cfg.command.contains("pytest");
+    if (javascript || python) && !steps_has_tests(&steps) {
+        return empty_run();
+    }
+    if python {
         let interp = pytest_interp(&cfg.command);
         if !python_has_module(interp, "pytest_bdd") {
             return failed_run(format!(
@@ -117,7 +168,13 @@ pub fn run_suite(root: &Path, cfg: &Config) -> SuiteRun {
         let _ = std::fs::create_dir_all(parent);
     }
     let started = Instant::now();
-    let cmd_s = cfg.subst(&cfg.command, root);
+    let mut cmd_s = cfg.subst(&cfg.command, root);
+    if cfg.uses_shell() && !extra.is_empty() {
+        for a in extra {
+            cmd_s.push(' ');
+            cmd_s.push_str(&shell_quote(a));
+        }
+    }
     let mut cmd = if cfg.uses_shell() {
         let mut c = Command::new("sh");
         c.arg("-c").arg(&cmd_s);
@@ -129,6 +186,9 @@ pub fn run_suite(root: &Path, cfg: &Config) -> SuiteRun {
         }
         let mut c = Command::new(&parts[0]);
         c.args(&parts[1..]);
+        if !extra.is_empty() {
+            c.args(extra);
+        }
         c
     };
     cmd.current_dir(root);
