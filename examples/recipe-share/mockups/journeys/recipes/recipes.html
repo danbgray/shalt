@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Create Recipe Share</title>
+    <link rel="stylesheet" href="../shalt.css">
+</head>
+<body data-salt="#recipe-share-app">
+
+<header>
+    <nav class="primary-nav">
+        <a href="../spec/packets.feature"><img src="../kit.png" alt="Shalt Logo"/></a>
+        <ul>
+            <li><a href="../ingredients.html">Ingredients</a></li>
+            <li><a href="recipes.html">Recipes</a></li>
+            <li><a href="../sharing.html">Sharing</a></li>
+            <li><a href="../video.html">Video</a></li>
+        </ul>
+    </nav>
+</header>
+
+<main id="app-content">
+    <div class="page-section" data-rid="s-9efb55b0-title">
+        <h1 class="title">Create Recipe Share</h1>
+        <button class="primary-btn create-btn-main" data-action="create-share">Share a New Recipe</button>
+    </div>
+
+    <div class="page-section" data-rid="s-9efb55b0-title-content">
+        <p class="welcome-msg">Welcome! Choose your share type below:</p>
+        <table class="instructions-table">
+            <tr>
+                <th>Type</th>
+                <th>Description</th>
+            </tr>
+            <tr>
+                <td><code>Private</code></td>
+                <td>Your recipe is only seen by invited guests.</td>
+            </tr>
+            <tr>
+                <td><code>Public</code></td>
+                <td>Your recipe appears in the shared feed for all readers.</td>
+            </tr>
+            <tr>
+                <td><code>Email Share</code></td>
+                <td>You send an email with your recipe to a specific contact.</td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="form-container" data-rid="share-type">
+        <label for="share-type"><strong>Type:</strong></label>
+        <select id="share-type">
+            <option value="">Choose a share type</option>
+            <option value="private">Private (invite only)</option>
+            <option value="public">Public (shared feed)</option>
+            <option value="email">Email to contact</option>
+        </select>
+    </div>
+
+    <div class="form-container" data-rid="recipe-title">
+        <label for="recipe-title"><strong>Title:</strong></label>
+        <input type="text" id="recipe-title" placeholder="Recipe Title" required>
+    </div>
+
+    <div class="form-container" data-rid="recipe-desc">
+        <label for="recipe-desc"><strong>Description:</strong></label>
+        <textarea id="recipe-desc" rows="4" placeholder="Short description of your recipe"></textarea>
+    </div>
+
+    <div class="form-container" data-rid="public-url">
+        <label for="public-url"><strong>Public URL:</strong></label>
+        <input type="url" id="public-url" placeholder="https://yoursite.com/r/title" required>
+    </div>
+
+    <button class="primary-btn share-btn" data-action="publish-share">Share Recipe</button>
+</main>
+
+<script src="../shalt.js"></script>
+</body>
+</html>

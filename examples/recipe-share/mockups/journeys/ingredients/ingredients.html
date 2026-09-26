@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Ingest Ingredients</title>
+  <style>
+    :root {
+      --paper: #ffffff;
+      --ink: #2c3e50;
+      --accent: #3498db;
+    }
+    * { box-sizing: border-box; }
+    body { font-family: 'Inter', system-ui, sans-serif; margin: 0; padding: 40px; background: var(--paper); color: var(--ink); }
+    .container { max-width: 720px; margin: 0 auto; }
+    h1 { font-size: 36px; text-align: center; margin-bottom: 40px; }
+    .search-card { background: var(--accent); color: white; padding: 40px; border-radius: 12px; text-align: center; }
+    .ingredient-search { display: flex; gap: 12px; justify-content: center; margin-top: 24px; }
+    .checkbox { display: inline-block; width: 56px; height: 32px; border: 3px solid rgba(255,255,255,0.3); cursor: pointer; }
+    .checkbox.selected { background: white; border-color: var(--ink); }
+    .amazon-btn { padding: 16px 48px; background: #ff9900; color: white; border-radius: 8px; font-weight: bold; text-decoration: none; }
+    .amazon-btn:hover { background: #e68a00; }
+    .success-state { display: none; margin-top: 24px; text-align: center; }
+    .success-card { background: var(--paper); border: 3px solid var(--accent); border-radius: 12px; padding: 50px; }
+    .success-title { font-size: 36px; margin-bottom: 24px; color: var(--ink); }
+    .success-message { font-size: 24px; color: #27ae60; line-height: 1.6; }
+    .packet-preview { background: #f0f0f0; padding: 40px; border-radius: 8px; text-align: center; margin-top: 32px; }
+    .recipe-ingredient-row { display: flex; justify-content: space-between; padding: 16px; border-bottom: 1px solid #eee; align-items: center; }
+    .recipe-ingredient-row:last-child { border-bottom: none; }
+    .ingredient-name { font-size: 20px; font-weight: bold; }
+    .packets-list { margin-top: 48px; }
+    .packet-item { background: var(--ink); color: white; padding: 20px; border-radius: 8px; margin-bottom: 16px; }
+    .packet-item-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    .packet-name { font-size: 24px; font-weight: bold; }
+    .amazon-link { color: #ff9900; font-weight: bold; text-decoration: none; }
+    .action-button { background: var(--accent); color: white; padding: 16px 32px; border-radius: 8px; text-decoration: none; display: inline-block; margin-top: 16px; font-weight: bold; }
+    .action-button:hover { background: #2980b9; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>What Ingredients Are Needed?</h1>
+
+    <!-- S-1 Hero Section -->
+    <section id="hero-section" data-rid="S-1">
+      <div class="search-card">
+        <p style="font-size: 28px; margin-bottom: 40px;">Choose an ingredient to create a meal packet with Amazon Fresh.</p>
+        <form onsubmit="handleIngredientSelect(event, 'tomatoes')">
+          <div class="ingredient-search">
+            <label for="checkbox-tomatoes" class="checkbox" title="20 ounces of tomatoes">Tomatoes</label>
+            <label for="checkbox-onions" class="checkbox" title="1/2 cup diced onions">Onions</label>
+            <label for="checkbox-garlic" class="checkbox" title="3 cloves minced garlic">Garlic</label>
+          </div>
+          <input type="hidden" name="ingredient" id="selected-ingredient">
+          <button type="submit" class="amazon-btn">Select Ingredient → Create Packets with Amazon Fresh</button>
+        </form>
+      </div>
+
+      <!-- S-3 Success State -->
+      <section id="success-state" class="success-state" style="display: none;">
+        <div class="success-card">
+          <h2 class="success-title">Packet Created!</h2>
+          <p class="success-message">You'll get a meal packet with the Amazon Fresh link to create packets from your selected ingredients.</p>
+          <div class="packet-preview">
+            <div class="recipe-ingredient-row">
+              <span class="ingredient-name">Ingredient</span>
+              <span class="amazon-link">Amazon Fresh → Order Ingredients & Create Packets</span>
+            </div>
+          </div>
+        </div>
+
+        <section id="packets-section" class="packets-list">
+          <!-- Dynamic packets will be added here -->
+        </section>
+      </section>
+    </section>
+  </div>
+
+  <script>
+    const recipes = {
+      tomatoes: { name: 'Tomatoes Recipe', ingredient: 'tomatoes' },
+      onions: { name: 'Onions Recipe', ingredient: 'onions' },
+      garlic: { name: 'Garlic Recipe', ingredient: 'garlic' }
+    };
+
+    function handleIngredientSelect(event, ingredient) {
+      event.preventDefault();
+      const checkbox = document.getElementById('checkbox-' + ingredient);
+      const input = document.getElementById('selected-ingredient');
+      
+      if (checkbox.checked) {
+        input.value = ingredient;
+        checkboxesUncheck();
+      } else {
+        checkboxesUncheck();
+      }
+
+      showSuccess(ingredient);
+    }
+
+    function checkboxesUncheck() {
+      const checkboxes = document.querySelectorAll('.checkbox:checked');
+      checkboxes.forEach(cb => cb.classList.remove('selected'));
+    }
+
+    function showSuccess(ingredient) {
+      const successState = document.getElementById('success-state');
+      const packetsSection = document.getElementById('packets-section');
+      
+      successState.style.display = 'block';
+      packetsSection.innerHTML = ''; // Clear existing packets
+      
+      if (recipes[ingredient]) {
+        packetsSection.innerHTML += `
+          <div class="packet-item">
+            <div class="packet-item-header">
+              <span class="packet-name">${recipes[ingredient].name}</span>
+              <a href="#" class="amazon-link" data-rid="S-2">Create Meal Packet with Amazon Fresh</a>
+            </div>
+          </div>
+        `;
+      }
+
+      showSuccessState(successState, ingredient);
+    }
+
+    function showSuccessState(element, ingredient) {
+      const packetItem = document.getElementById('packet-item-' + ingredient);
+      const amazonLink = packetItem.querySelector('.amazon-link');
+      
+      if (amazonLink) {
+        amazonLink.setAttribute('href', '/shelves/shopping/create-meal-packet?ingredient=' + ingredient);
+        amazonLink.innerHTML = 'Create Meal Packet with Amazon Fresh →';
+      }
+
+      element.style.display = 'none';
+    }
+
+    // Initialize ingredients selection
+    checkboxes.forEach(cb => {
+      cb.addEventListener('change', (e) => handleIngredientSelect(e, e.target.value));
+    });
+  </script>
+</body>
+</html>

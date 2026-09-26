@@ -1,0 +1,85 @@
+<section data-rid="S-5b078f7b">
+  <main>
+    <h1>Create a recipe</h1>
+    <p class="meta">Signed in as <strong>maya@example.com</strong></p>
+
+    <label for="title">Title</label>
+    <input id="title" type="text" value="Weeknight Tomato Pasta" />
+
+    <h2>Ingredients</h2>
+    <ul class="list">
+      <li>400g canned tomatoes</li>
+      <li>300g spaghetti</li>
+      <li>2 cloves garlic</li>
+    </ul>
+    <div class="row">
+      <div>
+        <label for="ing-new">Add ingredient</label>
+        <input id="ing-new" type="text" placeholder="e.g. 1 tbsp olive oil" />
+      </div>
+      <button type="button">Add ingredient</button>
+    </div>
+
+    <h2>Steps</h2>
+    <ol class="steps">
+      <li>Sauté garlic in olive oil until fragrant</li>
+      <li>Add tomatoes and simmer 15 minutes</li>
+      <li>Boil spaghetti and toss with sauce</li>
+    </ol>
+    <div class="row">
+      <div>
+        <label for="step-new">Add step</label>
+        <input id="step-new" type="text" placeholder="Next instruction" />
+      </div>
+      <button type="button">Add step</button>
+    </div>
+
+    <div class="actions">
+      <button type="button" class="primary">Save recipe</button>
+    </div>
+    <p class="ok-msg">Weeknight Tomato Pasta · 3 ingredients · 3 steps in order</p>
+  </main>
+</section>
+
+<section data-rid="S-474f3a31">
+  <main>
+    <h1>Create a recipe</h1>
+    <p class="meta">Signed in as <strong>maya@example.com</strong></p>
+
+    <div class="field-error">
+      <label for="title-empty">Title</label>
+      <input id="title-empty" type="text" value="" />
+      <p class="error">Title is required</p>
+    </div>
+
+    <label for="ing-empty">Ingredients</label>
+    <input id="ing-empty" type="text" placeholder="Add an ingredient" />
+
+    <label for="step-empty">Steps</label>
+    <input id="step-empty" type="text" placeholder="Add a step" />
+
+    <div class="actions">
+      <button type="button" class="primary">Save recipe</button>
+    </div>
+    <p class="error">The recipe is not saved</p>
+  </main>
+</section>
+
+<section data-rid="S-727b3ecd">
+  <main>
+    <h1>Edit recipe step</h1>
+    <p class="meta">Weeknight Tomato Pasta · owned by maya@example.com</p>
+
+    <div class="card">
+      <h2>Step 2</h2>
+      <p class="meta">Was: Add tomatoes and simmer 15 minutes</p>
+      <label for="step-2">Step text</label>
+      <input id="step-2" type="text" value="Add tomatoes, salt, and simmer 12 minutes" />
+    </div>
+
+    <div class="actions">
+      <button type="button" class="primary">Save step 2</button>
+    </div>
+    <p class="ok-msg">Step 2 is now “Add tomatoes, salt, and simmer 12 minutes”</p>
+  </main>
+</section>

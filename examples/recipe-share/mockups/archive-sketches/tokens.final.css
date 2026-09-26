@@ -1,0 +1,262 @@
+/* Desktop · hand-sketched industrial · paper cream + charcoal + indigo */
+:root {
+  --paper: #f3efe6;
+  --ink: #2a2a28;
+  --ink-muted: #5c5a54;
+  --line: #2a2a28;
+  --indigo: #3d4f8c;
+  --indigo-soft: #d8dcf0;
+  --warn-bg: #f0d8d4;
+  --warn-ink: #8b2e2e;
+  --ok-bg: #d8e6d4;
+  --ok-ink: #2a5a32;
+  --stub-bg: #f5c4c0;
+  --shadow: 3px 3px 0 #2a2a28;
+  --radius: 4px;
+  --font: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+  --space: 0.75rem;
+}
+
+section[data-rid] {
+  font-family: var(--font);
+  color: var(--ink);
+  background: var(--paper);
+  border: 2px solid var(--line);
+  box-shadow: var(--shadow);
+  border-radius: var(--radius);
+  padding: calc(var(--space) * 1.5);
+  margin: 0 0 calc(var(--space) * 2);
+}
+
+section[data-rid] main {
+  max-width: 42rem;
+}
+
+section[data-rid] h1 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin: 0 0 var(--space);
+  letter-spacing: -0.02em;
+  border-bottom: 2px solid var(--line);
+  padding-bottom: 0.35rem;
+}
+
+section[data-rid] h2 {
+  font-size: 1.05rem;
+  margin: calc(var(--space) * 1.25) 0 0.4rem;
+}
+
+section[data-rid] .meta {
+  color: var(--ink-muted);
+  font-size: 0.9rem;
+  margin: 0 0 var(--space);
+}
+
+section[data-rid] label {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 0.6rem 0 0.25rem;
+}
+
+section[data-rid] input[type="text"],
+section[data-rid] input[type="email"],
+section[data-rid] input[type="url"],
+section[data-rid] input[type="number"],
+section[data-rid] textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 2px solid var(--line);
+  background: #fffdf8;
+  color: var(--ink);
+  padding: 0.45rem 0.55rem;
+  font: inherit;
+  border-radius: var(--radius);
+  box-shadow: 1px 1px 0 var(--line);
+}
+
+section[data-rid] .row {
+  display: flex;
+  gap: var(--space);
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+section[data-rid] .row > div {
+  flex: 1 1 12rem;
+}
+
+section[data-rid] button,
+section[data-rid] .btn {
+  font: inherit;
+  font-weight: 600;
+  border: 2px solid var(--line);
+  background: #fffdf8;
+  color: var(--ink);
+  padding: 0.45rem 0.9rem;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+}
+
+section[data-rid] button.primary,
+section[data-rid] .btn.primary {
+  background: var(--indigo);
+  color: #f7f5ef;
+  border-color: #243056;
+}
+
+section[data-rid] .actions {
+  margin-top: calc(var(--space) * 1.25);
+  display: flex;
+  gap: var(--space);
+  flex-wrap: wrap;
+}
+
+section[data-rid] .card {
+  border: 2px solid var(--line);
+  background: #fffdf8;
+  padding: var(--space);
+  margin: var(--space) 0;
+  border-radius: var(--radius);
+  box-shadow: 2px 2px 0 var(--line);
+}
+
+section[data-rid] .list,
+section[data-rid] .steps {
+  margin: 0.25rem 0 0.75rem;
+  padding-left: 1.25rem;
+}
+
+section[data-rid] .list li,
+section[data-rid] .steps li {
+  margin: 0.25rem 0;
+}
+
+section[data-rid] table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+section[data-rid] th,
+section[data-rid] td {
+  border: 1px solid var(--line);
+  padding: 0.35rem 0.5rem;
+  text-align: left;
+}
+
+section[data-rid] th {
+  background: var(--indigo-soft);
+}
+
+section[data-rid] .tag {
+  display: inline-block;
+  border: 1.5px solid var(--line);
+  padding: 0.1rem 0.45rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-radius: 999px;
+  background: #fffdf8;
+}
+
+section[data-rid] .tag.accent {
+  background: var(--indigo-soft);
+  color: var(--indigo);
+  border-color: var(--indigo);
+}
+
+section[data-rid] .tag.ok {
+  background: var(--ok-bg);
+  color: var(--ok-ink);
+}
+
+section[data-rid] .tag.warn {
+  background: var(--warn-bg);
+  color: var(--warn-ink);
+}
+
+section[data-rid] .error {
+  color: var(--warn-ink);
+  background: var(--warn-bg);
+  border: 1.5px solid var(--warn-ink);
+  padding: 0.35rem 0.55rem;
+  margin: 0.35rem 0;
+  border-radius: var(--radius);
+  font-weight: 600;
+}
+
+section[data-rid] .field-error input {
+  border-color: var(--warn-ink);
+}
+
+section[data-rid] .ok-msg {
+  color: var(--ok-ink);
+  background: var(--ok-bg);
+  border: 1.5px solid var(--ok-ink);
+  padding: 0.35rem 0.55rem;
+  margin: 0.5rem 0 0;
+  border-radius: var(--radius);
+  font-weight: 600;
+}
+
+section[data-rid] .mono,
+section[data-rid] code {
+  font-family: var(--mono);
+  font-size: 0.88em;
+  word-break: break-all;
+}
+
+section[data-rid] a.link {
+  color: var(--indigo);
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+section[data-rid] .stub {
+  background: var(--stub-bg);
+  border: 2px solid var(--warn-ink);
+  color: var(--warn-ink);
+  padding: var(--space);
+  font-weight: 700;
+  border-radius: var(--radius);
+  margin: var(--space) 0;
+}
+
+section[data-rid] .paywall {
+  border: 2px dashed var(--indigo);
+  background: var(--indigo-soft);
+  padding: calc(var(--space) * 1.25);
+  text-align: center;
+  border-radius: var(--radius);
+}
+
+section[data-rid] .video-frame {
+  border: 2px solid var(--line);
+  background: #1c1c1a;
+  color: #f3efe6;
+  aspect-ratio: 16 / 9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 0.35rem;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  margin-top: var(--space);
+}
+
+
+/* final — change font, color, imagery here. Sketch chrome stays. */
+/* kit color: paper cream + charcoal ink + one indigo accent */
+/* kit style: hand-sketched industrial */
+/* kit layout: left nav, dense cards */

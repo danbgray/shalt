@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Create Video</title>
+    <link rel="stylesheet" href="../shalt.css">
+</head>
+<body data-salt="#video-app">
+
+<header>
+    <nav class="primary-nav">
+        <a href="../spec/packets.feature"><img src="../kit.png" alt="Shalt Logo"/></a>
+        <ul>
+            <li><a href="../ingredients.html">Ingredients</a></li>
+            <li><a href="../recipes.html">Recipes</a></li>
+            <li><a href="../sharing.html">Sharing</a></li>
+            <li><a href="video.html">Video</a></li>
+         </ul>
+     </nav>
+</header>
+
+<main id="app-content">
+    <div class="page-section" data-rid="s-4067c9ff-title">
+        <h1 class="title">Create Recipe Video</h1>
+        <button class="primary-btn create-btn-main" data-action="create-video">Create New Video</button>
+     </div>
+
+    <div class="page-section" data-rid="s-4067c9ff-title-content">
+         <p class="welcome-msg">Welcome! Choose your upload type below:</p>
+         <table class="instructions-table">
+             <tr>
+                 <th>Type</th>
+                 <th>Description</th>
+             </tr>
+             <tr>
+                 <td><code>Skip to Step</code></td>
+                 <td>Jumps to a specific step with video tag</td>
+             </tr>
+             <tr>
+                 <td><code>Full Video</code></td>
+                 <td>Your entire recipe video (uploaded file)</td>
+             </tr>
+             <tr>
+                 <td><code>Video Link</code></td>
+                 <td>You share a link to an existing video URL</td>
+             </tr>
+         </table>
+     </div>
+
+     <div class="form-container" data-rid="upload-type">
+         <label for="upload-type"><strong>Type:</strong></label>
+         <select id="upload-type">
+             <option value="">Choose a upload type</option>
+             <option value="skip-step">Skip to step (tag a video)</option>
+             <option value="full-video">Full recipe video (uploaded file)</option>
+             <option value="video-link">Video link (existing URL)</option>
+         </select>
+     </div>
+
+     <div class="form-container" data-rid="video-title">
+         <label for="video-title"><strong>Title:</strong></label>
+         <input type="text" id="video-title" placeholder="Video Title" required>
+     </div>
+
+     <div class="form-container" data-rid="description">
+         <label for="description"><strong>Description:</strong></label>
+         <textarea id="description" rows="4" placeholder="Description of your video"></textarea>
+     </div>
+
+     <div class="form-container" data-rid="step-link">
+         <label for="step-link"><strong>Step Link:</strong></label>
+         <input type="text" id="step-link" placeholder="https://yoursite.com/video/step1" required>
+     </div>
+
+     <div class="form-container" data-rid="video-url">
+         <label for="video-url"><strong>Video URL:</strong></label>
+         <input type="url" id="video-url" placeholder="https://example.com/video.mp4" required>
+     </div>
+
+     <button class="primary-btn upload-btn" data-action="upload-video">Upload Video</button>
+</main>
+
+<script src="../shalt.js"></script>
+</body>
+</html>

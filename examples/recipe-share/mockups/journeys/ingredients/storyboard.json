@@ -1,0 +1,22 @@
+{
+    "journey": "Ingredients Journey",
+    "kind": "ui",
+    "spec_hash": "eec514efac173278ed62e253e639a3e1b973986252d95f9d8bdea615f8c09e69",
+    "frames": [
+        {
+            "rid": "S-1",
+            "file": "mockups/journeys/ingredients/ingredients.html",
+            "caption": "Journey Hero Section: 'What Ingredients Are Needed?' - Select an ingredient with Amazon Fresh link"
+        },
+        {
+            "rid": "S-2",
+            "file": "mockups/journeys/ingredients/ingredients.html",
+            "caption": "Ingredient Search Form: Checkbox selections for tomatoes, onions, garlic"
+        },
+        {
+            "rid": "S-3",
+            "file": "mockups/journeys/ingredients/success.html",
+            "caption": "Success State after creating packet with Amazon Fresh order link"
+        }
+    ]
+}

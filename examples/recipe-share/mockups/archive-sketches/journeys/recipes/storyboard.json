@@ -1,0 +1,22 @@
+{
+  "journey": "recipes",
+  "kind": "ui",
+  "spec_hash": "7e1b0f1e1dc54493ad42d808146f85e01544ee35158b347a223f7a6b462d9d5a",
+  "frames": [
+    {
+      "rid": "S-5b078f7b",
+      "file": "recipes.html",
+      "caption": "Create Weeknight Tomato Pasta with 3 ingredients and 3 ordered steps"
+    },
+    {
+      "rid": "S-474f3a31",
+      "file": "recipes.html",
+      "caption": "Reject empty title — error “Title is required”, recipe not saved"
+    },
+    {
+      "rid": "S-727b3ecd",
+      "file": "recipes.html",
+      "caption": "Edit step 2 to add salt and simmer 12 minutes"
+    }
+  ]
+}

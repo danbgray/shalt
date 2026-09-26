@@ -1,0 +1,95 @@
+<section data-rid="S-825b9723">
+  <main>
+    <h1>Group ingredients into a packet</h1>
+    <p class="meta">Public recipe <strong>Weeknight Tomato Pasta</strong></p>
+
+    <div class="card">
+      <h2>Recipe ingredients</h2>
+      <table>
+        <thead>
+          <tr><th>Name</th><th>Quantity</th><th>Include</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>canned tomatoes</td>
+            <td>400g</td>
+            <td><input type="checkbox" checked /></td>
+          </tr>
+          <tr>
+            <td>spaghetti</td>
+            <td>300g</td>
+            <td><input type="checkbox" checked /></td>
+          </tr>
+          <tr>
+            <td>garlic</td>
+            <td>2 cloves</td>
+            <td><input type="checkbox" checked /></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <label for="packet-name">Packet name</label>
+    <input id="packet-name" type="text" value="Pasta night basics" />
+
+    <div class="actions">
+      <button type="button" class="primary">Create packet from all ingredients</button>
+    </div>
+    <p class="ok-msg">Packet “Pasta night basics” contains 3 items · linked to Weeknight Tomato Pasta</p>
+  </main>
+</section>
+
+<section data-rid="S-a95e97ec">
+  <main>
+    <h1>Amazon Fresh order link</h1>
+    <p class="meta">Packet <strong>Pasta night basics</strong> on Weeknight Tomato Pasta</p>
+
+    <div class="card">
+      <p>Author Amazon Associate tag</p>
+      <p class="mono">cookshare-20</p>
+      <ul class="list">
+        <li>canned tomatoes</li>
+        <li>spaghetti</li>
+        <li>garlic</li>
+      </ul>
+    </div>
+
+    <div class="actions">
+      <button type="button" class="primary">Get Amazon Fresh order link</button>
+    </div>
+
+    <div class="card">
+      <span class="tag accent">Referral</span>
+      <p>Amazon Fresh URL includes tag cookshare-20 and packet ingredient names</p>
+      <p class="mono">https://www.amazon.com/fresh?tag=cookshare-20&amp;items=canned+tomatoes,spaghetti,garlic</p>
+      <p><a class="link" href="https://www.amazon.com/fresh?tag=cookshare-20&amp;items=canned+tomatoes,spaghetti,garlic">Open Amazon Fresh cart</a></p>
+    </div>
+  </main>
+</section>
+
+<section data-rid="S-2f95e8e9">
+  <main>
+    <h1>Amazon Fresh order link</h1>
+    <p class="meta">Packet <strong>Pasta night basics</strong> · author has no Amazon Associate tag</p>
+
+    <div class="card">
+      <span class="tag warn">No associate tag</span>
+      <p>Cart URL still builds without a tag parameter.</p>
+      <ul class="list">
+        <li>canned tomatoes</li>
+        <li>spaghetti</li>
+        <li>garlic</li>
+      </ul>
+    </div>
+
+    <div class="actions">
+      <button type="button" class="primary">Get Amazon Fresh order link</button>
+    </div>
+
+    <div class="card">
+      <p>Amazon Fresh URL (no associate tag)</p>
+      <p class="mono">https://www.amazon.com/fresh?items=canned+tomatoes,spaghetti,garlic</p>
+      <p><a class="link" href="https://www.amazon.com/fresh?items=canned+tomatoes,spaghetti,garlic">Open Amazon Fresh cart</a></p>
+    </div>
+  </main>
+</section>

@@ -1,0 +1,81 @@
+<div class="shalt-page">
+  <header id="header" class="shalt-header">
+    <nav id="navbar-nav">
+      <a href="/"><strong>SALT</strong></a> | 
+      <a href="#recipes-ingredient-list"><strong>Ingredients</strong></a>
+    </nav>
+  </header>
+
+  <main id="main-content">
+    <section class="shalt-hero">
+      <h1>Welcome to SALT: Recipes, Sharing & Community</h1>
+      <div class="shalt-primary-action">
+        <a href="#recipes-ingredient-list">Create New Recipe</a>
+      </div>
+    </section>
+
+    <section id="ingredients-list" class="shalt-hero">
+      <h2>Rapid-Fry Ingredients List (3 items, $7.99)</h2>
+      <ul id="rapid-fry-ingredient-list" class="shalt-rapid-fry-list">
+        <li class="shalt-item"><strong>Salt</strong></li>
+        <li class="shalt-item"><strong>Pepper</strong></li>
+        <li class="shalt-item"><strong>Fresh Water</strong></li>
+      </ul>
+    </section>
+
+    <section id="recipes-ingredient-list" class="shalt-hero">
+      <h2>Rapid-Fry Ingredients List (3 items, $7.99)</h2>
+      <div class="shalt-item-container">
+        <strong>Salt</strong> - 500g - $1.29
+      </div>
+    </section>
+
+    <section id="patrons" class="shalt-hero">
+      <h2>Community Members (7 members, $12.99/month)</h2>
+      <div class="shalt-member-list">
+        <div class="shalt-member"><strong>Kate Johnson</strong></div>
+        <div class="shalt-member"><strong>Marcus Wilson</strong></div>
+        <div class="shalt-member"><strong>Sarah Chen</strong></div>
+      </div>
+    </section>
+
+    <section id="video" class="shalt-hero">
+      <h2>Share Your Recipe (Free)</h2>
+      <form id="recipe-share-form" action="/api/recipe-share" method="POST">
+        <input type="text" placeholder="Recipe Title" required />
+        <input type="url" name="public-url" placeholder="Your Public URL" required />
+        <button type="submit">Share</button>
+      </form>
+    </section>
+
+    <section class="shalt-footer">
+      <p>&copy; 2025 SALT. All rights reserved.</p>
+    </section>
+  </main>
+</div>
+
+<script type="module">
+  import { renderNavigation } from './assets/nav.js';
+  renderNavigation();
+</script>
+
+<style>
+:root {
+  --paper: #fff;
+  --ink: #000;
+  --accent: #8b0000;
+}
+
+.shalt-page, .shalt-hero { background-color: var(--paper); }
+.shalt-header, .shalt-footer { padding: 1rem; border-bottom: 2px solid var(--ink); }
+.shalt-nav { display: flex; gap: 2rem; }
+.shalt-nav a { color: var(--ink); text-decoration: none; font-size: 1.25rem; }
+.shalt-hero h1, .shalt-footer p { margin-top: 0; }
+
+#navbar-nav a { padding: 0 1rem; }
+#recipes-ingredient-list { display: flex; gap: 3rem; }
+</style>
+
+<script type="module">
+  import { renderNavigation } from './assets/nav.js';
+</script>

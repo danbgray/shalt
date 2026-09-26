@@ -44,7 +44,7 @@ English → Feature/Scenario spec → storyboards → pick a language → bound 
 
 ![Projects](images/desk-inbox.png)
 
-*Two local projects. Envelope is paused on purpose. Recipe share is a fixture for the write pool — not this repo.*
+*Two local projects. Envelope is paused on purpose. Recipe share is the fixture in `examples/recipe-share` (spec + wireframes).*
 
 Play / Pause / Yolo / language live on the card. Forecast vs spent is measured tokens and time, not a human estimate.
 

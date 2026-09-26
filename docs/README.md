@@ -21,7 +21,7 @@ Shalt turns an English request into Feature/Scenario obligations, then drives is
 
 `shalt diagrams` writes [diagrams/](diagrams/).
 
-`examples/invoice` is the offline loop. `examples/rust-billing` is cucumber-rs.
+`examples/invoice` is the offline loop. `examples/rust-billing` is cucumber-rs. `examples/recipe-share` is a Play snapshot with wireframes.
 
 ## Short
 

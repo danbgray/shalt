@@ -1,0 +1,90 @@
+<section data-rid="S-1feef354">
+  <main>
+    <h1>Attach full-recipe video</h1>
+    <p class="meta">Weeknight Tomato Pasta · owned by maya@example.com</p>
+
+    <label for="video-url">Full recipe video URL</label>
+    <input id="video-url" type="url" value="https://cdn.example.com/videos/tomato-pasta.mp4" />
+
+    <div class="actions">
+      <button type="button" class="primary">Attach video</button>
+    </div>
+
+    <div class="card">
+      <span class="tag ok">Attached</span>
+      <p class="mono">https://cdn.example.com/videos/tomato-pasta.mp4</p>
+      <div class="video-frame">
+        <span>FULL RECIPE VIDEO</span>
+        <span>tomato-pasta.mp4</span>
+      </div>
+    </div>
+  </main>
+</section>
+
+<section data-rid="S-cd8d37a2">
+  <main>
+    <h1>Tag step timestamps</h1>
+    <p class="meta">Weeknight Tomato Pasta · full video tomato-pasta.mp4</p>
+
+    <div class="card">
+      <h2>Step 1 · Sauté garlic in olive oil until fragrant</h2>
+      <label for="ts-1">Timestamp</label>
+      <input id="ts-1" type="text" value="00:00:12" />
+    </div>
+
+    <div class="card">
+      <h2>Step 2 · Add tomatoes and simmer 15 minutes</h2>
+      <label for="ts-2">Timestamp</label>
+      <input id="ts-2" type="text" value="00:01:45" />
+    </div>
+
+    <div class="actions">
+      <button type="button" class="primary">Save timestamps</button>
+    </div>
+    <p class="ok-msg">Step 1 → 00:00:12 · Step 2 → 00:01:45</p>
+  </main>
+</section>
+
+<section data-rid="S-a37deda2">
+  <main>
+    <h1>Open step clip</h1>
+    <p class="meta">Weeknight Tomato Pasta · viewer opens clip for step 2</p>
+
+    <div class="card">
+      <h2>Step 2 · Add tomatoes and simmer 15 minutes</h2>
+      <p class="meta">Tagged at <strong>00:01:45</strong></p>
+      <div class="actions">
+        <a class="btn primary" href="https://cdn.example.com/videos/tomato-pasta.mp4#t=105">Play step 2 clip</a>
+      </div>
+    </div>
+
+    <div class="video-frame">
+      <span>PLAYBACK @ 00:01:45</span>
+      <span class="mono">https://cdn.example.com/videos/tomato-pasta.mp4</span>
+    </div>
+  </main>
+</section>
+
+<section data-rid="S-c293794d">
+  <main>
+    <h1>Tag step timestamps</h1>
+    <p class="meta">Weeknight Tomato Pasta · step 1 already at 00:02:00</p>
+
+    <div class="card">
+      <h2>Step 1</h2>
+      <p class="mono">00:02:00</p>
+    </div>
+
+    <div class="field-error">
+      <h2>Step 2</h2>
+      <label for="ts-bad">Timestamp</label>
+      <input id="ts-bad" type="text" value="00:01:00" />
+      <p class="error">Step timestamps must be in order</p>
+    </div>
+
+    <div class="actions">
+      <button type="button" class="primary">Save timestamps</button>
+    </div>
+    <p class="error">The tag is rejected</p>
+  </main>
+</section>

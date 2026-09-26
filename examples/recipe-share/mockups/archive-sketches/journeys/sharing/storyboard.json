@@ -1,0 +1,22 @@
+{
+  "journey": "sharing",
+  "kind": "ui",
+  "spec_hash": "a5e107ab76b26b366eb0869312dd23b93c5c499cf95e91b6d1bd6688077d6dae",
+  "frames": [
+    {
+      "rid": "S-6c0b5135",
+      "file": "sharing.html",
+      "caption": "Publish Weeknight Tomato Pasta and get /r/weeknight-tomato-pasta"
+    },
+    {
+      "rid": "S-ce79785d",
+      "file": "sharing.html",
+      "caption": "Anonymous viewer sees title, ingredients, and ordered steps"
+    },
+    {
+      "rid": "S-8c867a92",
+      "file": "sharing.html",
+      "caption": "Unpublished private recipe returns not-found on share URL"
+    }
+  ]
+}

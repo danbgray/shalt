@@ -1,0 +1,32 @@
+{
+  "journey": "patrons",
+  "kind": "ui",
+  "spec_hash": "8e73498e63008d3e2ceccc1eb002cb81ad8dbd3064c6e48c69aa7271fb10e366",
+  "frames": [
+    {
+      "rid": "S-b11f635d",
+      "file": "patrons.html",
+      "caption": "Author maya enables patronage at $5 per month"
+    },
+    {
+      "rid": "S-6b9498d8",
+      "file": "patrons.html",
+      "caption": "Reader sam subscribes as patron at $5 per month"
+    },
+    {
+      "rid": "S-d0212d9f",
+      "file": "patrons.html",
+      "caption": "Non-patron sees paywall on Sunday Ragu, no ingredients"
+    },
+    {
+      "rid": "S-85d4347e",
+      "file": "patrons.html",
+      "caption": "Active patron sam views Sunday Ragu ingredients and steps"
+    },
+    {
+      "rid": "S-1abe66a5",
+      "file": "patrons.html",
+      "caption": "Cancelled patron hits paywall again on Sunday Ragu"
+    }
+  ]
+}

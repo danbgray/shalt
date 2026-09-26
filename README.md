@@ -13,7 +13,7 @@ shall --yes total invoices exactly in the customer's currency
 shalt ui
 ```
 
-`shall <sentence>` is `shalt do`. `--yes` accepts every scenario. `examples/invoice/demo.sh` is the offline loop (no API key). `examples/rust-billing` is cucumber-rs.
+`shall <sentence>` is `shalt do`. `--yes` accepts every scenario. `examples/invoice/demo.sh` is the offline loop (no API key). `examples/rust-billing` is cucumber-rs. `examples/recipe-share` is a Play snapshot (spec + wireframes).
 
 **[Manual](docs/manual.md)** — desk screenshots, the Play loop, `#observe:`.
 
@@ -144,8 +144,9 @@ See [limitations.md](docs/limitations.md). Short version: Feature/Scenario is a 
 crates/shalt-core/      engine
 crates/shalt/           CLI + desk HTML
 crates/shalt-app/       optional macOS wrapper
-examples/invoice/       offline fixture (Python is the SUT)
-examples/rust-billing/  cucumber-rs
+examples/invoice/         offline fixture (Python is the SUT)
+examples/rust-billing/    cucumber-rs
+examples/recipe-share/    Play snapshot: spec, wireframes, steps, store
 docs/
 ```
 

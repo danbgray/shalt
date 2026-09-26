@@ -1,0 +1,21 @@
+# shalt workspace configuration
+[project]
+name = "recipe-share"
+stack = "javascript"
+
+[zones]
+steps = "steps"
+src = "src"
+
+[runner]
+command = "npx cucumber-js {spec} --import {steps}/**/*.js --format message:{report}"
+format = "cucumber-messages"
+report = ".shalt/messages.ndjson"
+timeout = 900
+
+[ui]
+editor = ""
+color = "auto"
+
+[ask]
+guess_tries = 5

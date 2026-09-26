@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Ingest Ingredients - Success State</title>
+  <style>
+     :root {
+       --paper: #ffffff;
+       --ink: #2c3e50;
+       --accent: #3498db;
+     }
+     * { box-sizing: border-box; }
+    body { font-family: 'Inter', system-ui, sans-serif; margin: 0; padding: 40px; background: var(--paper); color: var(--ink); }
+    .container { max-width: 720px; margin: 0 auto; }
+    h1 { font-size: 36px; text-align: center; margin-bottom: 40px; }
+    .success-card { background: #e8f5e9; border: 3px solid var(--accent); border-radius: 12px; padding: 50px; text-align: center; }
+     .success-icon { font-size: 64px; color: var(--accent); margin-bottom: 24px; }
+     .success-title { font-size: 36px; margin-bottom: 24px; color: var(--ink); }
+     .success-message { font-size: 24px; line-height: 1.6; }
+    </style>
+</head>
+<body>
+   <div class="container">
+     <h1>Ingest Ingredients</h1>
+
+     <!-- Success State -->
+     <section id="success-state" style="display: none;" class="success-card">
+       <div class="success-icon">✓</div>
+       <h2 class="success-title">Meal Packet Created!</h2>
+       <p class="success-message">Your Amazon Fresh link is ready to create meal packets from your ingredients.</p>
+     </section>
+
+     <!-- Packets List -->
+     <section id="packets-section" style="margin-top: 48px;">
+       <!-- Dynamic packets added by JavaScript -->
+     </section>
+   </div>
+
+   <script>
+    const recipes = {
+      tomatoes: { name: 'Tomatoes Recipe', ingredient: 'tomatoes' },
+      onions: { name: 'Onions Recipe', ingredient: 'onions' },
+      garlic: { name: 'Garlic Recipe', ingredient: 'garlic' }
+     };
+
+    const packets = [];
+
+    function createPacketItem(ingredient) {
+      return `
+         <div class="packet-item">
+           <div class="packet-item-header">
+             <span class="packet-name">${recipes[ingredient].name}</span>
+             <a href="/shelves/shopping/create-meal-packet?ingredient=${encodeURIComponent(ingredient)}" class="amazon-link">Create Meal Packet with Amazon Fresh</a>
+           </div>
+         </div>
+       `;
+     }
+
+    function showPacketList() {
+      const packetContainer = document.getElementById('packets-section');
+      
+      packets.forEach(packet => {
+        packetContainer.innerHTML += createPacketItem(packet.ingredient);
+      });
+
+      if (packets.length === 0) {
+        packetContainer.innerHTML = '<p style="text-align: center; color: #999;">No ingredients selected yet.</p>';
+      }
+     }
+
+    // Initialize packets
+    showPacketList();
+   </script>
+</body>
+</html>

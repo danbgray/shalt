@@ -1,0 +1,27 @@
+{
+  "journey": "video",
+  "kind": "ui",
+  "spec_hash": "48ab953a1479ae73f0e53615a616482b06499c202b74132213d294990b1f15c4",
+  "frames": [
+    {
+      "rid": "S-1feef354",
+      "file": "video.html",
+      "caption": "Attach full-recipe video tomato-pasta.mp4"
+    },
+    {
+      "rid": "S-cd8d37a2",
+      "file": "video.html",
+      "caption": "Tag step 1 at 00:00:12 and step 2 at 00:01:45"
+    },
+    {
+      "rid": "S-a37deda2",
+      "file": "video.html",
+      "caption": "Viewer opens step 2 clip starting at 00:01:45"
+    },
+    {
+      "rid": "S-c293794d",
+      "file": "video.html",
+      "caption": "Reject out-of-order timestamp — must be in order"
+    }
+  ]
+}

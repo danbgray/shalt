@@ -1,0 +1,22 @@
+{
+  "journey": "ingredients",
+  "kind": "ui",
+  "spec_hash": "914efa59bb329d7160c9abaff17a7ff55f4a8e6a7301f342ef5ad90493f06b28",
+  "frames": [
+    {
+      "rid": "S-825b9723",
+      "file": "ingredients.html",
+      "caption": "Group all ingredients into packet Pasta night basics"
+    },
+    {
+      "rid": "S-a95e97ec",
+      "file": "ingredients.html",
+      "caption": "Amazon Fresh referral URL with tag cookshare-20"
+    },
+    {
+      "rid": "S-2f95e8e9",
+      "file": "ingredients.html",
+      "caption": "Cart URL still builds when author has no associate tag"
+    }
+  ]
+}
