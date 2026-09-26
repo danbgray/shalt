@@ -106,6 +106,26 @@ Keys (Grok, OpenAI, Anthropic) live in the sidebar **Keys** panel → `~/.shalt/
 
 macOS: `./scripts/macos-install.sh` puts Shalt.app in Applications and `shalt` on PATH. That is a window around the same desk, not a second product.
 
+![Desk inbox](docs/images/desk-inbox.png)
+
+*Catalog. One project plays at a time. Forecast vs spent is measured.*
+
+![New project](docs/images/desk-new.png)
+
+*`What shall it do?` Specify writes the spec. Play is later.*
+
+![Details](docs/images/desk-details.png)
+
+*Details: Feature rail, `#observe:`, sketch. Review is sentences plus Then bodies.*
+
+![Tests](docs/images/desk-tests.png)
+
+*Tests tab. Pending is not green.*
+
+![Play loop](docs/images/desk-loop.png)
+
+*Desk tab. Plan → Details → Language → Tests → Run → Build → Idle.*
+
 ## Commands
 
 ```
