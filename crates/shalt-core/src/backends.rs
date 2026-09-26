@@ -4,6 +4,10 @@ use std::path::{Path, PathBuf};
 pub trait Backend: Send {
     fn name(&self) -> &str;
     fn run(&mut self, role: &str, prompt: &str, stage: &Path) -> Result<String, String>;
+    /// Sum of prompt and completion tokens billed this turn. Fixture is zero.
+    fn usage(&self) -> (i64, i64) {
+        (0, 0)
+    }
 }
 
 pub struct FixtureBackend {

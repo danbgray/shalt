@@ -21,6 +21,7 @@ pub mod markups;
 pub mod mockups;
 pub mod mutate;
 pub mod narrative;
+pub mod oracles;
 pub mod org;
 pub mod pack;
 pub mod parallel;
@@ -49,8 +50,8 @@ pub use git::{clone_git_source, github_clone_name, looks_like_git_source, normal
 pub use compose::{
     author_prompt, author_prompt_with_spec, author_system_prompt, author_user_prompt, chat_on_job, chat_on_job_with,
     spec_snapshot,
-    backend_quota_exhausted, decide_on_job, designer_user_prompt, designer_user_prompt_for, execute_author, execute_design, grok_failover_target_if, grok_is_usable, last_assistant_on, list_dirs,
-    local_failover_target_if, looks_like_cloud_quota, looks_like_local_stall, onboard_project, pick_local_model, restack_project, start_project, ASK_CHAT_SYSTEM,
+    backend_key_ready, backend_quota_exhausted, decide_on_job, designer_user_prompt, designer_user_prompt_for, execute_author, execute_design, grok_failover_target_if, grok_is_usable, last_assistant_on, list_dirs,
+    local_failover_target_if, looks_like_cloud_quota, looks_like_local_stall, looks_like_missing_key, onboard_project, pick_local_model, restack_project, start_project, ASK_CHAT_SYSTEM,
     ASK_DECIDE, ComposeRequest, DirListing,
 };
 pub use config::{restack, stack_choices, RestackReport, StackChoice};

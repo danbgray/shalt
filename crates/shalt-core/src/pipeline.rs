@@ -3,7 +3,7 @@
 use crate::board::{verify_drift, Board};
 use crate::compose::{backend_for_job, execute_author, run_role_or_failover};
 use crate::config::Config;
-use crate::integrity::audit;
+use crate::integrity::audit_in;
 use crate::jobs::{kind_phase, Job, JobKind, JobQueue, JobStatus};
 use crate::ledger::{Ledger, GREEN, ORPHAN, PENDING, RED, STALE};
 use crate::org::Org;
@@ -73,7 +73,10 @@ pub fn next_stage(root: &Path) -> Stage {
         .filter(|s| s.rid.is_none())
         .count();
     if remaining > 0 || unstamped > 0 {
-        if !led.suite_surveyed() {
+        if !led.suite_surveyed()
+            || led.remaining_need_survey(&focus)
+            || steps_need_rescan(root)
+        {
             Stage::Run
         } else {
             Stage::Build
@@ -100,8 +103,10 @@ pub fn work_gate(root: &Path) -> &'static str {
 pub fn ensure_play_lock(root: &Path) -> Result<usize, String> {
     let minted = stamp_rids(&root.join("spec")).map_err(|e| e.to_string())?;
     let features = load_specs(&root.join("spec"), false).map_err(|e| e.to_string())?;
+    crate::oracles::feature_oracles_ready(&features)?;
     let mut led = Ledger::load(&root.join(".shalt/ledger.json")).unwrap_or_default();
     led.sync_spec(&features);
+    let current_oracles = crate::oracles::oracle_lock_map(&features);
     let empty = led
         .spec_lock
         .as_object()
@@ -125,7 +130,10 @@ pub fn ensure_play_lock(root: &Path) -> Result<usize, String> {
             "approved_at": chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
             "scenario_count": features.iter().map(|f| f.scenarios.len()).sum::<usize>(),
             "scenario_hashes": hashes,
+            "oracles": current_oracles,
         });
+    } else {
+        lock_oracle_amendments(&mut led, &current_oracles);
     }
     let mut board = Board::load(&root.join(".shalt/board.json"));
     board.sync_new_rids(&features);
@@ -133,6 +141,41 @@ pub fn ensure_play_lock(root: &Path) -> Result<usize, String> {
     led.save(&root.join(".shalt/ledger.json"))
         .map_err(|e| e.to_string())?;
     Ok(minted.len())
+}
+
+fn lock_oracle_amendments(led: &mut Ledger, current: &serde_json::Value) {
+    let locked = led.spec_lock.get("oracles").cloned();
+    if locked.is_none()
+        || locked
+            .as_ref()
+            .and_then(|v| v.as_object())
+            .map(|o| o.is_empty())
+            .unwrap_or(true)
+    {
+        if let Some(obj) = led.spec_lock.as_object_mut() {
+            obj.insert("oracles".into(), current.clone());
+        }
+        return;
+    }
+    let Some(old_map) = locked.as_ref().and_then(|v| v.as_object()) else {
+        return;
+    };
+    let Some(new_map) = current.as_object() else {
+        return;
+    };
+    for (rid, now_v) in new_map {
+        let was_v = old_map.get(rid);
+        if was_v == Some(now_v) {
+            continue;
+        }
+        let was = was_v
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "unset".into());
+        led.note_amendment(rid, "observe", &was, &now_v.to_string());
+    }
+    if let Some(obj) = led.spec_lock.as_object_mut() {
+        obj.insert("oracles".into(), current.clone());
+    }
 }
 
 fn project_root(project_id: &str) -> Result<PathBuf, String> {
@@ -153,12 +196,116 @@ fn inherit(q: &JobQueue, project_id: &str) -> (String, String) {
                 && (!j.backend.is_empty() || !j.model.is_empty())
                 && !(grok_out && crate::tokens::normalize_backend(&j.backend) == "grok")
         })
-        .map(|j| (j.backend.clone(), j.model.clone()))
+        .map(|j| {
+            if j.status == JobStatus::Failed {
+                let mut installed = installed_local();
+                if installed.is_empty() {
+                    installed = crate::alloc::WRITE_MODELS
+                        .iter()
+                        .map(|s| (*s).to_string())
+                        .collect();
+                }
+                if let Some(next) = crate::alloc::pick_escalate_model(&installed, &j.model) {
+                    return next;
+                }
+            }
+            (j.backend.clone(), j.model.clone())
+        })
         .unwrap_or_else(|| ("qwen".into(), String::new()))
+}
+
+fn last_author<'a>(q: &'a JobQueue, project_id: &str) -> Option<&'a Job> {
+    q.jobs
+        .iter()
+        .rev()
+        .find(|j| j.project_id == project_id && j.kind == JobKind::Author)
+}
+
+/// Failed local writer → next in the write chain. Last writer stays put.
+/// Design used to pin_write back to 2B after every timeout because the board
+/// still named Claude (no key) or the same 2B assignment.
+fn hop_write_after_fail(
+    q: &JobQueue,
+    project_id: &str,
+    kind: JobKind,
+) -> Option<(String, String)> {
+    let last = q
+        .jobs
+        .iter()
+        .rev()
+        .find(|j| j.project_id == project_id && j.kind == kind)?;
+    if !matches!(last.status, JobStatus::Failed | JobStatus::Interrupted) {
+        return None;
+    }
+    if !crate::alloc::is_write_model(&last.model) {
+        return None;
+    }
+    crate::alloc::pick_escalate_model_filtered(&write_chain_installed(), &last.model, true)
+        .or_else(|| Some((last.backend.clone(), last.model.clone())))
+}
+
+fn write_chain_installed() -> Vec<String> {
+    let mut installed = installed_local();
+    if installed.is_empty() {
+        installed = crate::alloc::WRITE_MODELS
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+    }
+    installed
+}
+
+/// Markdown / 0-scenario specs must hop the write chain, not loop the same flash model.
+enum EmptyAuthor {
+    First,
+    Hop(String, String),
+    Stop,
+}
+
+fn empty_spec_author_next(q: &JobQueue, project_id: &str) -> EmptyAuthor {
+    let Some(last) = last_author(q, project_id) else {
+        return EmptyAuthor::First;
+    };
+    if !matches!(
+        last.status,
+        JobStatus::Done | JobStatus::Failed | JobStatus::Interrupted
+    ) {
+        return EmptyAuthor::Stop;
+    }
+    match crate::alloc::pick_escalate_model(&write_chain_installed(), &last.model) {
+        Some((backend, model)) => EmptyAuthor::Hop(backend, model),
+        None => EmptyAuthor::Stop,
+    }
 }
 
 /// Queue the next stage (tests, then code) for a free epoch.
 /// Another ticket in the same project may already be running.
+/// Stop Play when the board is n/n green. Idle used to leave the Play
+/// toggle on with 0 workers.
+fn park_complete(project_id: &str, root: &Path) {
+    let mut org = Org::load();
+    if org.get(project_id).map(|p| p.paused).unwrap_or(true) {
+        return;
+    }
+    let features = load_specs(&root.join("spec"), false).unwrap_or_default();
+    let mut led = Ledger::load(&root.join(".shalt/ledger.json")).unwrap_or_default();
+    led.sync_spec(&features);
+    let total = led.entries.len();
+    let green = led
+        .entries
+        .values()
+        .filter(|e| e.status == GREEN)
+        .count();
+    let mut reason = crate::org::play_done_reason(green, total);
+    let never_red = led.unfalsified_greens().len();
+    if never_red > 0 {
+        reason.push_str(&format!(" · {never_red} never went red"));
+    }
+    if org.pause(project_id, true, Some(&reason)) {
+        let _ = org.save();
+    }
+}
+
 pub fn continue_project(project_id: &str) -> Result<Option<Job>, String> {
     let org = Org::load();
     let Some(p) = org.get(project_id) else {
@@ -166,6 +313,12 @@ pub fn continue_project(project_id: &str) -> Result<Option<Job>, String> {
     };
     if p.paused {
         return Ok(None);
+    }
+    {
+        let mut q = JobQueue::load();
+        if !q.skip_non_product_waits(project_id).is_empty() {
+            let _ = q.save();
+        }
     }
     let q = JobQueue::load();
     let root = PathBuf::from(&p.path);
@@ -186,7 +339,7 @@ pub fn continue_project(project_id: &str) -> Result<Option<Job>, String> {
     board.sync_epics(&features);
     let mut led = Ledger::load(&root.join(".shalt/ledger.json")).unwrap_or_default();
     led.sync_spec(&features);
-    if crate::sprint::cadence_due(&board, &led) {
+    if stage != Stage::Idle && crate::sprint::cadence_due(&board, &led) {
         let yolo = Org::yolo_plan(project_id);
         match crate::sprint::maybe_enqueue_plan(
             project_id,
@@ -206,17 +359,26 @@ pub fn continue_project(project_id: &str) -> Result<Option<Job>, String> {
             Err(_) => {}
         }
     }
-    let kind = match stage {
-        Stage::Idle => return Ok(None),
-        Stage::Author => JobKind::Author,
-        Stage::Design => JobKind::Design,
-        Stage::Ux => JobKind::Ux,
-        Stage::Language => {
-            return Err("Pick a build language first, then Play writes tests.".into())
+    // Author Done must survey even on Idle / empty spec. Otherwise a flash
+    // dump chains spec rewrites forever and never hops.
+    let kind = if survey_after_author(&q, project_id) {
+        JobKind::Run
+    } else {
+        match stage {
+            Stage::Idle => {
+                park_complete(project_id, &root);
+                return Ok(None);
+            }
+            Stage::Author => JobKind::Author,
+            Stage::Design => JobKind::Design,
+            Stage::Ux => JobKind::Ux,
+            Stage::Language => {
+                return Err("Pick a build language first, then Play writes tests.".into())
+            }
+            Stage::Steps => JobKind::Steps,
+            Stage::Run => JobKind::Run,
+            Stage::Build => play_kind_after_survey(&root, &led, &features, &board.focus_journey),
         }
-        Stage::Steps => JobKind::Steps,
-        Stage::Run => JobKind::Run,
-        Stage::Build => play_kind_after_survey(&root, &led, &features, &board.focus_journey),
     };
     let sprint = board.active_sprint().map(|s| s.id.clone());
     let mut assign = crate::tokens::next_free_assignment(
@@ -253,11 +415,45 @@ pub fn continue_project(project_id: &str) -> Result<Option<Job>, String> {
     {
         return Ok(None);
     }
-    let (backend, model) = match &assign {
-        Some(a) if !a.backend.is_empty() || !a.model.is_empty() => {
-            (a.backend.clone(), a.model.clone())
+    let empty_spec = crate::spec::gherkin_scenario_count(&features) == 0;
+    let pin_write = || {
+        let installed = installed_local();
+        crate::alloc::pick_fast_model_filtered(&installed, true).unwrap_or_else(|| {
+            (
+                "qwen".into(),
+                crate::alloc::WRITE_MODELS
+                    .iter()
+                    .find(|m| !crate::alloc::is_flash_writer(m))
+                    .unwrap_or(&"qwen3.5:2b-mlx")
+                    .to_string(),
+            )
+        })
+    };
+    let (backend, model) = if kind == JobKind::Steps {
+        pin_write()
+    } else if kind == JobKind::Author && empty_spec {
+        match empty_spec_author_next(&q, project_id) {
+            EmptyAuthor::Hop(backend, model) => (backend, model),
+            EmptyAuthor::First => pin_write(),
+            EmptyAuthor::Stop => return Ok(None),
         }
-        _ => inherit(&q, project_id),
+    } else if kind == JobKind::Author {
+        pin_write()
+    } else if kind == JobKind::Design {
+        hop_write_after_fail(&q, project_id, JobKind::Design).unwrap_or_else(pin_write)
+    } else {
+        match &assign {
+            Some(a) if !a.backend.is_empty() || !a.model.is_empty() => {
+                (a.backend.clone(), a.model.clone())
+            }
+            _ => inherit(&q, project_id),
+        }
+    };
+    // Board may pin Claude/Grok. No key → local writer, not a failed Design with 0 workers.
+    let (backend, model) = if crate::compose::backend_key_ready(&backend) {
+        (backend, model)
+    } else {
+        pin_write()
     };
     let mut q = JobQueue::load();
     let job = q.enqueue_full(kind, project_id, "", &backend, &model);
@@ -331,6 +527,75 @@ pub fn continue_project(project_id: &str) -> Result<Option<Job>, String> {
     Ok(Some(q.get(&job.id).cloned().unwrap_or(job)))
 }
 
+fn steps_sha_path(root: &Path) -> PathBuf {
+    root.join(".shalt/steps.sha")
+}
+
+fn hash_step_files(root: &Path) -> String {
+    let cfg = Config::load(root).unwrap_or_default();
+    let dir = root.join(&cfg.steps);
+    let mut names: Vec<_> = std::fs::read_dir(&dir)
+        .ok()
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            matches!(
+                p.extension().and_then(|s| s.to_str()),
+                Some("js") | Some("rs")
+            )
+        })
+        .collect();
+    names.sort();
+    let mut h = 0u64;
+    for p in names {
+        let body = std::fs::read_to_string(&p).unwrap_or_default();
+        for b in body.bytes() {
+            h = h.wrapping_mul(16777619) ^ b as u64;
+        }
+    }
+    format!("{h:016x}")
+}
+
+fn record_steps_surveyed(root: &Path) {
+    let p = steps_sha_path(root);
+    if let Some(dir) = p.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(p, hash_step_files(root) + "\n");
+}
+
+fn steps_need_rescan(root: &Path) -> bool {
+    let stored = std::fs::read_to_string(steps_sha_path(root)).unwrap_or_default();
+    let stored = stored.trim();
+    if stored.is_empty() {
+        return false;
+    }
+    if stored == "rescan" {
+        return true;
+    }
+    stored != hash_step_files(root)
+}
+
+fn last_inner_done<'a>(q: &'a JobQueue, project_id: &str) -> Option<&'a Job> {
+    q.jobs.iter().rev().find(|j| {
+        j.project_id == project_id
+            && matches!(
+                j.kind,
+                JobKind::Author | JobKind::Run | JobKind::Steps | JobKind::Build
+            )
+            && matches!(j.status, JobStatus::Done | JobStatus::Failed)
+    })
+}
+
+/// Author Done must survey before another author/build/tests pass.
+/// Otherwise a stale `[ambiguous]` dump chains spec rewrites forever.
+fn survey_after_author(q: &JobQueue, project_id: &str) -> bool {
+    last_inner_done(q, project_id)
+        .is_some_and(|j| j.kind == JobKind::Author && j.status == JobStatus::Done)
+}
+
 fn play_kind_after_survey(
     root: &Path,
     led: &Ledger,
@@ -346,11 +611,11 @@ fn play_kind_after_survey(
                 && (focus_journey.trim().is_empty() || e.epic == focus_journey)
         })
         .count();
+    if led.duplicate_step_failures() > 0 || harness_points_at_steps(led) {
+        return JobKind::Steps;
+    }
     if led.spec_shaped_failures() > 0 {
         return JobKind::Author;
-    }
-    if harness_points_at_steps(led) {
-        return JobKind::Steps;
     }
     let defs = crate::bindings::load_step_defs(root);
     let unbound = crate::bindings::unbound_scenarios(features, &defs, focus_journey).len();
@@ -530,16 +795,22 @@ fn steps_target_rel(cfg: &Config, journey: &str) -> String {
 fn stepwright_brief(root: &Path, journey: &str, model: &str, extra: &str) -> String {
     let cfg = Config::load(root).unwrap_or_default();
     let rel = steps_target_rel(&cfg, journey);
-    let file_text = std::fs::read_to_string(root.join(&rel)).unwrap_or_else(|_| "(missing)\n".into());
+    let file_full = std::fs::read_to_string(root.join(&rel)).unwrap_or_else(|_| "(missing)\n".into());
     let features = load_specs(&root.join("spec"), false).unwrap_or_default();
-    let unbound = crate::brief::unbound_lines(&features, journey);
     let defs = crate::bindings::load_step_defs(root);
-    let bound_phrases: Vec<String> = defs
-        .iter()
-        .filter(|d| !d.stub)
-        .map(|d| format!("{}|{}", d.kw, d.pattern))
-        .collect();
-    let contract_names: Vec<String> = std::fs::read_to_string(root.join("contract/interface.md"))
+    let (file_text, unbound) =
+        if let Some((f, s)) = crate::bindings::first_unbound(&features, journey, &defs) {
+            let blocks = crate::brief::pending_blocks_for(&file_full, f, s);
+            let text = if blocks.is_empty() {
+                file_full.clone()
+            } else {
+                blocks
+            };
+            (text, crate::brief::scenario_lines(f, s))
+        } else {
+            (file_full.clone(), crate::brief::unbound_lines(&features, journey))
+        };
+    let mut contract_names: Vec<String> = std::fs::read_to_string(root.join("contract/interface.md"))
         .ok()
         .map(|md| {
             crate::scaffold::parse_js_contract(&md)
@@ -553,6 +824,9 @@ fn stepwright_brief(root: &Path, journey: &str, model: &str, extra: &str) -> Str
                 .collect()
         })
         .unwrap_or_default();
+    if contract_names.is_empty() {
+        contract_names = crate::brief::src_export_names(root);
+    }
     let mut user = crate::brief::stepwright_user(&crate::brief::StepBrief {
         stack: cfg.stack.clone(),
         model: model.to_string(),
@@ -561,7 +835,7 @@ fn stepwright_brief(root: &Path, journey: &str, model: &str, extra: &str) -> Str
         file_text,
         unbound,
         contract_names,
-        bound_phrases,
+        bound_phrases: Vec::new(),
     });
     if !extra.trim().is_empty() {
         user.push_str("\n\n");
@@ -610,14 +884,46 @@ fn execute_steps(job_id: &str) -> Result<String, String> {
     }
     let defs_before = crate::bindings::load_step_defs(&root);
     let bound_before = crate::bindings::bound_count(&features, &defs_before, &journey);
+    if let Some((_, s)) = crate::bindings::first_unbound(&features, &journey, &defs_before) {
+        crate::bindings::save_fill_target(
+            &root,
+            &crate::bindings::FillTarget {
+                journey: journey.clone(),
+                rid: s.rid.clone().unwrap_or_default(),
+                name: s.name.clone(),
+            },
+        );
+        q.append(
+            job_id,
+            &format!(
+                "one scenario · {} ({bound_before} already bound in `{journey}`)",
+                s.name
+            ),
+        );
+    }
     q.append(
         job_id,
         &format!("writing real tests for journey {journey} ({bound_before} already bound)"),
     );
+    let filled = crate::scaffold::fill_all_js_pending_oracles(&root).unwrap_or_default();
+    if !filled.is_empty() {
+        q.append(
+            job_id,
+            &format!("filled {} pending oracles from src/", filled.len()),
+        );
+    }
     let _ = q.save();
     let cfg = Config::load(&root).unwrap_or_default();
     let target = steps_target_rel(&cfg, &journey);
-    let mut prompt = stepwright_brief(&root, &journey, &job.model, "");
+    let defs_now = crate::bindings::load_step_defs(&root);
+    let bound_now = crate::bindings::bound_count(&features, &defs_now, &journey);
+    let seeded_oracles = bound_now > bound_before;
+    let review = if seeded_oracles {
+        "Oracles were seeded from src/. Review them. Override any that aren't real oracles. Keep signatures. Then done()."
+    } else {
+        ""
+    };
+    let mut prompt = stepwright_brief(&root, &journey, &job.model, review);
     #[allow(unused_assignments)]
     let mut wrote: Vec<String> = Vec::new();
     #[allow(unused_assignments)]
@@ -625,6 +931,15 @@ fn execute_steps(job_id: &str) -> Result<String, String> {
     #[allow(unused_assignments)]
     let mut bound_after = bound_before;
     let mut tries = 0usize;
+    if seeded_oracles {
+        bound_after = bound_now;
+        let mut q = JobQueue::load();
+        q.append(
+            job_id,
+            &format!("seeded oracles — {bound_after} bound in `{journey}`; writer reviews"),
+        );
+        let _ = q.save();
+    }
     loop {
         if let Err(e) = wait_if_parked(job_id) {
             return finish_err(job_id, &e);
@@ -717,7 +1032,7 @@ fn execute_steps(job_id: &str) -> Result<String, String> {
                     let mut q = JobQueue::load();
                     q.append(job_id, &format!("lane · write · {} · stall", job.model));
                     let _ = q.save();
-                    if continue_write_chain(&mut job, tries, secs, 0) {
+                    if continue_after_stall(&mut job, tries, secs) {
                         prompt = stepwright_brief(
                             &root,
                             &journey,
@@ -743,6 +1058,15 @@ fn execute_steps(job_id: &str) -> Result<String, String> {
         ) {
             Err(e) => return finish_err(job_id, &e),
             Ok(None) => {
+                if bound_after > bound_before {
+                    let mut q = JobQueue::load();
+                    q.append(
+                        job_id,
+                        "audit skipped — bind kept; gate stays tests",
+                    );
+                    let _ = q.save();
+                    break;
+                }
                 return finish_err(
                     job_id,
                     "auditor did not respond — fail closed; gate stays tests",
@@ -831,6 +1155,8 @@ fn execute_build(job_id: &str, max_turns: usize) -> Result<String, String> {
     }
     let cfg = Config::load(&root).unwrap_or_default();
     let _ = crate::scaffold::apply_js_contract_stubs(&root);
+    let _ = crate::scaffold::fill_all_js_pending_oracles(&root);
+    let _ = crate::scaffold::fill_js_store_if_stub(&root);
     let features = match load_specs(&root.join("spec"), false) {
         Ok(f) => f,
         Err(e) => return finish_err(job_id, &e.to_string()),
@@ -986,7 +1312,18 @@ fn execute_build(job_id: &str, max_turns: usize) -> Result<String, String> {
                 );
                 let _ = q.save();
             }
-            Err(e) => return finish_err(job_id, &e.to_string()),
+            Err(e) => {
+                let msg = e.to_string();
+                if crate::compose::looks_like_local_stall(&msg) {
+                    let mut q = JobQueue::load();
+                    q.append(job_id, &format!("lane · write · {} · stall", job.model));
+                    let _ = q.save();
+                    if continue_after_stall(&mut job, turn, 0.0) {
+                        continue;
+                    }
+                }
+                return finish_err(job_id, &msg);
+            }
         }
     }
     let run = run_suite(&root, &cfg);
@@ -1143,23 +1480,57 @@ fn set_job_lane(job: &mut Job, backend: &str, model: &str, line: &str) {
     crate::api::keep_local_model(model);
 }
 
+fn last_inner_writer(project_id: &str, skip_id: &str) -> Option<String> {
+    let q = JobQueue::load();
+    q.jobs.iter().rev().find_map(|j| {
+        if j.id == skip_id || j.project_id != project_id {
+            return None;
+        }
+        if j.kind != crate::jobs::JobKind::Steps {
+            return None;
+        }
+        if crate::alloc::is_write_model(&j.model) {
+            Some(j.model.clone())
+        } else {
+            None
+        }
+    })
+}
+
 /// Writers stay on the tiny local model. 27B is loaded only for an audit pass.
+/// After an 8B fill, the next job starts there — not back at 2B.
 fn pin_inner_loop(job: &mut Job) {
     let installed = installed_local();
     let skip_flash = crate::api::heavy_review_loaded();
-    let Some((backend, model)) = crate::alloc::pick_fast_model_filtered(&installed, skip_flash)
-    else {
+    let last = last_inner_writer(&job.project_id, &job.id);
+    let pick = last
+        .filter(|m| installed.iter().any(|h| h == m))
+        .filter(|m| !(skip_flash && crate::alloc::is_flash_writer(m)))
+        .map(|m| ("qwen".to_string(), m))
+        .or_else(|| crate::alloc::pick_fast_model_filtered(&installed, skip_flash));
+    let Some((backend, model)) = pick else {
         crate::api::keep_local_model(&job.model);
         return;
     };
-    // Each tests/build job starts at the cheap end. Failures hop up. Do not
-    // keep 1.7B from a previous fail and skip 0.6B.
+    // Pin the write-pool model on the job before waiting, so the desk never
+    // shows Grok/Claude on an inner-loop tests job.
     set_job_lane(
         job,
         &backend,
         &model,
         &format!("lane · write · {model} · keep-alive"),
     );
+    let loaded = crate::api::ollama_loaded();
+    if crate::alloc::pin_should_wait(&loaded, &model, chrono::Utc::now()) {
+        let mut q = JobQueue::load();
+        q.append(
+            &job.id,
+            &format!("lane · write · {model} · stop — runner occupied"),
+        );
+        let _ = q.save();
+        crate::api::wait_if_contended(&model);
+        crate::api::keep_local_model(&model);
+    }
 }
 
 fn auditor_model() -> String {
@@ -1171,17 +1542,55 @@ fn auditor_model() -> String {
 /// On failure hop up the write chain. N is measured. No auditor sample yet:
 /// walk the remaining writers once so a missing 27B sample cannot strand us on 1.7B.
 fn continue_write_chain(job: &mut Job, fills: usize, secs: f64, completion: i64) -> bool {
-    crate::speed::record_fill(&job.model, secs, completion);
-    let auditor = auditor_model();
-    let have_audit = crate::speed::sample(&auditor).is_some();
-    let budget_secs = if completion > 0 { secs } else { 0.0 };
-    if have_audit && !crate::speed::another_fill_fits(fills, budget_secs, &job.model, &auditor) {
-        return false;
+    let cap = crate::alloc::local_max_tokens(&job.model) as i64;
+    let truncated = cap > 0 && completion >= cap;
+    if !truncated {
+        crate::speed::record_fill(&job.model, secs, completion);
     }
+    if !crate::api::hop_is_safe(&job.model) {
+        let mut q = JobQueue::load();
+        q.append(
+            &job.id,
+            &format!("lane · write · {} · stop — runner occupied", job.model),
+        );
+        let _ = q.save();
+        crate::api::wait_if_contended(&job.model);
+    }
+    // Failure hops up first. Measured leftover budget only repeats at the last writer.
     if escalate_writer(job) {
         return true;
     }
-    have_audit && crate::speed::another_fill_fits(fills, secs, &job.model, &auditor)
+    if truncated {
+        let auditor = auditor_model();
+        return crate::speed::truncated_retries(
+            fills,
+            secs,
+            crate::speed::sample(&auditor).as_ref(),
+        );
+    }
+    let auditor = auditor_model();
+    let have_audit = crate::speed::sample(&auditor).is_some();
+    let budget_secs = if completion > 0 { secs } else { 0.0 };
+    have_audit && crate::speed::another_fill_fits(fills, budget_secs, &job.model, &auditor)
+}
+
+/// Stall is a capacity signal. Do not hop to a hungrier model while the runner
+/// is occupied; wait, then retry the same writer. N is still measured.
+fn continue_after_stall(job: &mut Job, fills: usize, secs: f64) -> bool {
+    crate::speed::record_fill(&job.model, secs, 0);
+    if !crate::api::hop_is_safe(&job.model) {
+        let mut q = JobQueue::load();
+        q.append(
+            &job.id,
+            &format!("lane · write · {} · stop — runner occupied", job.model),
+        );
+        let _ = q.save();
+        crate::api::wait_if_contended(&job.model);
+        crate::api::keep_local_model(&job.model);
+    }
+    // Stall on 2B with leftover 27B used to return false and idle Play.
+    // Hop 2B→4B→8B beside the leftover instead of dying on the same writer.
+    continue_write_chain(job, fills, secs, 0)
 }
 
 fn escalate_writer(job: &mut Job) -> bool {
@@ -1192,6 +1601,10 @@ fn escalate_writer(job: &mut Job) -> bool {
     else {
         return false;
     };
+    let loaded = crate::api::ollama_loaded();
+    if !crate::alloc::hop_up_ok(&loaded, &job.model, &model, chrono::Utc::now()) {
+        return false;
+    }
     set_job_lane(
         job,
         &backend,
@@ -1215,9 +1628,33 @@ fn run_audit(
         let _ = q.save();
         return Ok(None);
     };
+    if crate::api::review_unusable(&model) {
+        let mut q = JobQueue::load();
+        q.append(
+            &job.id,
+            "audit · skipped — review model is loaded past the ctx cap",
+        );
+        let _ = q.save();
+        return Ok(None);
+    }
     let writer_b = job.backend.clone();
     let writer_m = job.model.clone();
     set_job_lane(job, &backend, &model, &format!("lane · audit · {model}"));
+    if crate::api::review_unusable(&model) {
+        set_job_lane(
+            job,
+            &writer_b,
+            &writer_m,
+            &format!("lane · write · {writer_m} · keep-alive"),
+        );
+        let mut q = JobQueue::load();
+        q.append(
+            &job.id,
+            "audit · skipped — pin loaded the review model past the ctx cap",
+        );
+        let _ = q.save();
+        return Ok(None);
+    }
     if let Err(e) = wait_if_parked(&job.id) {
         set_job_lane(
             job,
@@ -1317,6 +1754,7 @@ fn execute_run(job_id: &str) -> Result<String, String> {
         let _ = crate::journal::note_ledger(&root, &before, &led, &features);
     }
     let _ = led.save(&root.join(".shalt/ledger.json"));
+    record_steps_surveyed(&root);
     let s = led.summary();
     let summary = if run.harness_error {
         format!(
@@ -1484,7 +1922,7 @@ fn execute_verify(job_id: &str) -> Result<String, String> {
     };
     let led = Ledger::load(&root.join(".shalt/ledger.json")).unwrap_or_default();
     let features = load_specs(&root.join("spec"), false).unwrap_or_default();
-    let mut problems = audit(&led, &features);
+    let mut problems = audit_in(Some(&root), &led, &features);
     let board = Board::load(&root.join(".shalt/board.json"));
     problems.extend(verify_drift(&board, &features));
     problems.extend(crate::mockups::verify_mockups(&root, &features));
@@ -1527,6 +1965,12 @@ pub fn play_stop_reason(job: &Job) -> Option<String> {
     {
         return Some("Play stopped — the API key was refused.".into());
     }
+    if crate::compose::looks_like_missing_key(&blob) {
+        if crate::api::ollama_reachable() {
+            return None;
+        }
+        return Some("Play stopped — no API key for this model.".into());
+    }
     None
 }
 
@@ -1547,13 +1991,17 @@ fn failure_key(job: &Job) -> String {
     if e.contains("out of credits") || e.contains("spending limit") {
         return "credits".into();
     }
+    if crate::compose::looks_like_missing_key(&e) {
+        return "no-key".into();
+    }
     e.chars().filter(|c| c.is_ascii_alphanumeric() || *c == ' ').take(80).collect()
 }
 
 /// Same stage, same failure, three times. Mixed errors (credits then no-bind) are not a spin.
+/// Stall is the runner. Bind-no-new hops up the write chain — do not idle Play on it.
 fn spinning_failures(job: &Job) -> bool {
     let key = failure_key(job);
-    if key.is_empty() {
+    if key.is_empty() || key == "stall" || key == "no-bind" || key == "no-key" || key == "credits" {
         return false;
     }
     let q = JobQueue::load();

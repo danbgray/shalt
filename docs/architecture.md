@@ -69,11 +69,12 @@ in the pipeline where human review is both meaningful and affordable.
 
 ## Zones and roles
 
-Four zones, each with exactly one writer:
+Five zones, each with exactly one writer (human may write all):
 
 | zone | written by | read by | contains |
 |---|---|---|---|
-| `spec/` | author | everyone | Gherkin feature files and user stories |
+| `spec/` | author | everyone | Feature files and user stories |
+| `mockups/` | **designer** | designer, implementer, human | HTML storyboards (sketched until green) |
 | `steps/` | **stepwright** | the test runner | executable step definitions — the oracle |
 | `contract/` | **stepwright** | implementer | the API surface the steps will call |
 | `src/` | implementer | implementer, test runner | the implementation |

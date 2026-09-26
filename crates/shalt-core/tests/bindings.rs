@@ -68,6 +68,115 @@ fn cucumber_js_one_liner_with_equals_still_parses() {
 }
 
 #[test]
+fn all_pending_steps_are_all_stubs() {
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir_all(dir.path().join("steps")).unwrap();
+    std::fs::write(
+        dir.path().join("steps/recipes.steps.js"),
+        "Given('x', function () {\n  return 'pending';\n});\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("shalt.toml"),
+        "[project]\nstack = \"javascript\"\n[zones]\nsteps = \"steps\"\nsrc = \"src\"\n",
+    )
+    .unwrap();
+    assert!(shalt_core::bindings::steps_all_stubs(dir.path()));
+    std::fs::write(
+        dir.path().join("steps/recipes.steps.js"),
+        "Given('x', function (a) { this.x = a; });\n",
+    )
+    .unwrap();
+    assert!(!shalt_core::bindings::steps_all_stubs(dir.path()));
+    assert!(
+        !shalt_core::bindings::fill_target_is_bound(dir.path()),
+        "stage dir without fill-target.json is unbound — else dumps look finished"
+    );
+    assert!(
+        shalt_core::bindings::fill_target_stub_count(dir.path()) >= 1,
+        "missing target must not report 0 stubs (that reverted every write)"
+    );
+}
+
+#[test]
+fn fill_target_stays_unbound_until_the_scenario_is_real() {
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir_all(dir.path().join("spec")).unwrap();
+    std::fs::create_dir_all(dir.path().join("steps")).unwrap();
+    std::fs::write(
+        dir.path().join("shalt.toml"),
+        "[project]\nstack = \"javascript\"\n[zones]\nsteps = \"steps\"\nsrc = \"src\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("spec/recipes.feature"),
+        "@epic:recipes\nFeature: Recipes\n  Scenario: Create a recipe\n    When I create a recipe titled \"Pasta\"\n    Then the recipe \"Pasta\" has 3 ingredients\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("steps/recipes.steps.js"),
+        "When('I create a recipe titled {string}', function (a) {\n  return 'pending';\n});\nThen('the recipe {string} has 3 ingredients', function (a) {\n  return 'pending';\n});\n",
+    )
+    .unwrap();
+    shalt_core::bindings::save_fill_target(
+        dir.path(),
+        &shalt_core::bindings::FillTarget {
+            journey: "recipes".into(),
+            rid: String::new(),
+            name: "Create a recipe".into(),
+        },
+    );
+    assert!(!shalt_core::bindings::fill_target_is_bound(dir.path()));
+    std::fs::write(
+        dir.path().join("steps/recipes.steps.js"),
+        "When('I create a recipe titled {string}', function (title) { this.t = title; });\nThen('the recipe {string} has 3 ingredients', function (t) { assert.equal(t, this.t); });\n",
+    )
+    .unwrap();
+    assert!(shalt_core::bindings::fill_target_is_bound(dir.path()));
+}
+
+#[test]
+fn fill_target_stub_count_drops_when_a_body_is_real() {
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir_all(dir.path().join("spec")).unwrap();
+    std::fs::create_dir_all(dir.path().join("steps")).unwrap();
+    std::fs::write(
+        dir.path().join("shalt.toml"),
+        "[project]\nstack = \"javascript\"\n[zones]\nsteps = \"steps\"\nsrc = \"src\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("spec/recipes.feature"),
+        "@epic:recipes\nFeature: Recipes\n  Scenario: Create a recipe\n    When I create a recipe titled \"Pasta\"\n    Then the recipe \"Pasta\" has 3 ingredients\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("steps/recipes.steps.js"),
+        "When('I create a recipe titled {string}', function (a) {\n  return 'pending';\n});\nThen('the recipe {string} has 3 ingredients', function (a) {\n  return 'pending';\n});\n",
+    )
+    .unwrap();
+    shalt_core::bindings::save_fill_target(
+        dir.path(),
+        &shalt_core::bindings::FillTarget {
+            journey: "recipes".into(),
+            rid: String::new(),
+            name: "Create a recipe".into(),
+        },
+    );
+    assert_eq!(shalt_core::bindings::fill_target_stub_count(dir.path()), 2);
+    std::fs::write(
+        dir.path().join("steps/recipes.steps.js"),
+        "When('I create a recipe titled {string}', function (title) { this.t = title; });\nThen('the recipe {string} has 3 ingredients', function (a) {\n  return 'pending';\n});\n",
+    )
+    .unwrap();
+    assert_eq!(shalt_core::bindings::fill_target_stub_count(dir.path()), 1);
+    assert!(shalt_core::bindings::is_steps_fill_path("steps/recipes.steps.js"));
+    assert!(!shalt_core::bindings::is_steps_fill_path("steps/world.js"));
+    assert!(!shalt_core::bindings::is_steps_fill_path("contract/interface.md"));
+    assert!(!shalt_core::bindings::is_steps_fill_path("steps/../.shalt/ledger.json"));
+}
+
+#[test]
 fn cucumber_js_pending_body_is_a_stub() {
     let defs = parse_step_defs(
         r#"

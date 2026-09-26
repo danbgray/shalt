@@ -52,6 +52,9 @@ A one-binary install removes the interpreter, the inner-plugin import, and the �
 14. **Jobs are durable on disk, executed in-process.** No daemon. `shalt job add` / the UI enqueue to `~/.shalt/jobs.json`. `shalt ui` and `shalt job run` both process the queue. SSE is how you watch.
 15. **Sprints are optional.** The overlay always has the field. A project can hide sprints. The pipeline still reads: plan → tests → code.
 16. **`verify` fails on overlay drift.** Dangling rid, missing project path, sprint/milestone/goal id that does not exist. An unscheduled rid (in spec, not on the board) is backlog, not drift.
+17. **Onboard an existing repo.** `shalt onboard PATH` and the UI path field register the git workspace in place (they do not copy it into `~/.shalt/projects`). `ensure_workspace` writes `shalt.toml`, `spec/`, `steps/`, `contract/`, `.shalt/` only when missing, and never clobbers existing source. Author **reads** `src/` as well as `spec/`, and still **writes only** `spec/`. The prompt is: describe behaviour the code already implements; do not invent features. Stepwright still does not see `src/`.
+18. **Ask with a guess, and a breakout chat.** `ask_human` always sends a concrete `guess`. The answer field is pre-filled with it. **Discuss** expands a chat on the ask card and opens the right-hand rail. **Add to spec** (and Continue) folds the accepted answer into the visible **plain language spec** (`job.prompt`) under a heading for that question, then continues the author. The chat is how the English spec is written; Gherkin is compiled from it. Voice in Ikonic is the same chat.
+19. **Ikonic submodule, Linear glass.** The package at `ikonic/` embeds `shalt ui ?embed=1`. Ikonic is the host; the shalt surface is Linear-inspired (indigo, issue rows, light/dark/blue). `shalt ui` remains the engine.
 
 ## Architecture
 
@@ -125,14 +128,16 @@ Roll-up: a parent is never greener than its children (already a ledger invariant
 
 Vite + TypeScript + Preact. Preact is the SPA runtime because the bundle is embedded; it is not a product identity.
 
-Visual language, carried over from the current dashboard and not renegotiated in v1:
+Visual language is Linear-inspired (not a Linear clone). Shalt still loads as an Ikonic submodule; the glass inside the iframe is Linear.
 
-- Human intent (goals, stories, Gherkin prose) in a serif.
-- Machine state (ids, hashes, statuses, rids, job ids) in a mono.
-- Progress as discrete notches, one per task (scenario) — not a smooth bar. Roll-ups are counts of notches, not percentages-as-ornament.
-- Light and dark. Usable at phone width.
+- Inter / system sans. Tight tracking on titles. No serif, no LCARS uppercase capsules.
+- Near-black surfaces, 8px radius, hairline borders, indigo `#5e6ad2`.
+- Sidebar workspace (org), Inbox, project list. Jobs as issue rows: id, status dot, kind.
+- Machine state (ids, hashes, rids, job ids) in a mono.
+- Progress as discrete notches, one per task — not a smooth bar.
+- Light, dark, and blue themes. Usable at phone width. Embeddable (`?embed=1`).
 
-Linear-inspired, not a Linear clone: left sidebar for org/project/goals, main pane for the current view, a right drawer for the selected issue (story/task) and for a running job.
+Layout: left sidebar, main pane, right rail for Discuss. Interview chat is a breakout from the ask card, not a shell log.
 
 | route | job |
 |---|---|
@@ -178,7 +183,7 @@ name = "Invoice"
 path = "~/work/invoice"
 ```
 
-`shalt org add PATH` appends a project (must contain or be ready to `shalt init`). `shalt org remove ID` drops it from the catalog; it does not delete the git repo.
+`shalt org add PATH` registers an existing directory, scaffolds missing shalt files, and does not delete the git repo. `shalt onboard PATH [note]` does that and starts an author job that reads `src/` and writes Gherkin for behaviour already in the code. `shalt org rename ID NAME` changes the display name (id and jobs stay put). `shalt org remove ID` drops it from the catalog only. The UI can rename and remove from the project card and the project page.
 
 Two overlay files, same schema name, different contents:
 
@@ -413,5 +418,6 @@ Existing commands, flags, and exit codes: as `docs/cli.md`. `--root` still means
 | One repo or many? | Org home, many local projects |
 | Board vs spec? | Overlay ranks/schedules; spec holds obligations; two write paths |
 | Remote Linear/GitHub? | Not v1 |
+| Onboard existing repo? | Yes. In-place `org add` + author reads `src/`, writes only `spec/` |
 
 No remaining open product questions for v1. Implementation sequencing is the plan, not this spec.

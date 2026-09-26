@@ -1,9 +1,20 @@
+.DS_Store
+docs/moe-runs/
+docs/shalt-product-thus-far.pdf
+
 __pycache__/
 *.egg-info/
 .ratchet/stage/
 .ratchet/backup/
 .ratchet/last_run.json
 target/
+dist/
+crates/shalt-app/binaries/shalt-*
 .pytest_cache/
 
 .shalt/
+web/node_modules/
+web/.next/
+web/.env.local
+.vercel
+web/.vercel

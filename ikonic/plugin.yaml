@@ -1,0 +1,19 @@
+id: shalt
+name: Shalt
+version: 0.1.0
+description: "English → Gherkin → tests → code. Spec-bound ledger as an Ikonic surface. Embeds the local shalt ui (LCARS-themed) as a panel / center mode."
+author: Rivlet
+enabled: true
+dependencies:
+  - core
+  - panels
+provides:
+  endpoints: []
+backend:
+  enabled: false
+frontend:
+  enabled: true
+  bundle: frontend/index.js
+permissions: {}
+config:
+  shalt_url: "http://127.0.0.1:7702/?embed=1"

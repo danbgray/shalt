@@ -27,6 +27,7 @@ So the guarantees here are structural. Nothing relies on a role choosing not to 
 | 13 | overfitting to the visible examples | `@holdout` scenarios are approved, verified, never staged | `spec.strip_holdouts` | `test_holdouts_are_stripped_for_the_implementer_but_stay_in_the_ledger` |
 | 14 | holdout answers leaking via failure output | the failure digest is filtered to the role's visible rids | `runner.failure_digest` | covered in `test_api_backend`, `cmd_build` |
 | 15 | step definitions that assert nothing | mutation testing with per-scenario attribution | `mutate.py` | `test_a_vacuous_oracle_is_caught_as_a_blind_spot` |
+| 16 | another project's journeys (Desk, Traveler, Buyer) written into a new workspace | designer prompt lists only this spec's journeys; mockup inject chrome and click-through are built from this root's `mockups/journeys/` only — no hardcoded Envelope cast | `compose.designer_user_prompt`, `mockups.mockup_inject` | `designer_prompt_nav_is_this_spec_not_envelope_roles`, `mockup_inject_brand_follows_this_project_not_desk` |
 
 Attacks 1–9 are *capability* defences: the role cannot do the thing. Attacks 10–12 are
 *detection* defences: the thing is possible but cannot pass unnoticed. Attacks 13–15 are
@@ -95,15 +96,17 @@ From `integrity.py`:
 ```python
 ZONES = {                       # what each role may WRITE
     "author":      ("spec",),
+    "designer":    ("mockups",),
     "stepwright":  ("steps", "contract"),
     "implementer": ("src",),
-    "human":       ("spec", "steps", "contract", "src"),
+    "human":       ("spec", "steps", "contract", "src", "mockups"),
 }
 
 READS = {                       # what each role may READ
-    "author":      ("spec",),
+    "author":      ("spec", "src"),
+    "designer":    ("spec", "mockups"),
     "stepwright":  ("spec", "steps", "contract"),
-    "implementer": ("spec", "contract", "src"),
+    "implementer": ("spec", "contract", "src", "mockups"),
 }
 
 LEDGER_FILE = ".shalt/ledger.json"   # protected on every turn, for every role

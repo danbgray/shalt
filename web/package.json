@@ -1,0 +1,23 @@
+{
+  "name": "shalt-web",
+  "private": true,
+  "scripts": {
+    "copy-desk": "node scripts/copy-desk.mjs",
+    "predev": "npm run copy-desk",
+    "prebuild": "npm run copy-desk",
+    "dev": "next dev --port 3000",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "next": "^15.5.4",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "@types/react": "^19.1.13",
+    "@types/react-dom": "^19.1.9",
+    "typescript": "^5.9.2"
+  }
+}

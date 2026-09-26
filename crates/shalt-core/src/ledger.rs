@@ -2,7 +2,7 @@ use crate::spec::Feature;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
@@ -53,10 +53,182 @@ pub struct Entry {
     pub blind_spots: Option<i64>,
     #[serde(default)]
     pub history: Vec<Value>,
+    /// First non-harness suite colour for this Then. Green-first is a suspicion.
+    #[serde(default)]
+    pub first_colour: Option<String>,
+    #[serde(default)]
+    pub first_colour_at: Option<String>,
+    #[serde(default)]
+    pub was_ever_red: bool,
+}
+
+#[cfg(test)]
+mod first_colour_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn entry(rid: &str) -> Entry {
+        Entry {
+            rid: rid.into(),
+            name: "S".into(),
+            feature: "F".into(),
+            feature_file: "f.feature".into(),
+            line: 1,
+            tags: vec![],
+            epic: String::new(),
+            actor: String::new(),
+            capability: String::new(),
+            benefit: String::new(),
+            status: PENDING.into(),
+            spec_hash: "h".into(),
+            verified_spec_hash: String::new(),
+            last_green_at: None,
+            last_run_at: None,
+            failure: None,
+            mutants_killed: None,
+            blind_spots: None,
+            history: vec![],
+            first_colour: None,
+            first_colour_at: None,
+            was_ever_red: false,
+        }
+    }
+
+    #[test]
+    fn red_then_green_is_evidence() {
+        let mut led = Ledger::default();
+        led.entries.insert("S-1".into(), entry("S-1"));
+        let mut first = HashMap::new();
+        first.insert(
+            "S-1".into(),
+            RunResult {
+                outcome: "failed".into(),
+                detail: "no".into(),
+                nodeid: "t".into(),
+            },
+        );
+        led.apply_run(&first, "r1", "");
+        assert_eq!(led.entries["S-1"].first_colour.as_deref(), Some(RED));
+        assert!(led.entries["S-1"].was_ever_red);
+        let mut second = HashMap::new();
+        second.insert(
+            "S-1".into(),
+            RunResult {
+                outcome: "passed".into(),
+                detail: String::new(),
+                nodeid: "t".into(),
+            },
+        );
+        led.apply_run(&second, "r2", "");
+        assert_eq!(led.entries["S-1"].status, GREEN);
+        assert_eq!(led.entries["S-1"].first_colour.as_deref(), Some(RED));
+        assert!(led.unfalsified_greens().is_empty());
+    }
+
+    #[test]
+    fn green_first_is_suspicion() {
+        let mut led = Ledger::default();
+        led.entries.insert("S-1".into(), entry("S-1"));
+        let mut first = HashMap::new();
+        first.insert(
+            "S-1".into(),
+            RunResult {
+                outcome: "passed".into(),
+                detail: String::new(),
+                nodeid: "t".into(),
+            },
+        );
+        led.apply_run(&first, "r1", "");
+        assert_eq!(led.entries["S-1"].first_colour.as_deref(), Some(GREEN));
+        assert!(!led.entries["S-1"].was_ever_red);
+        assert_eq!(led.unfalsified_greens().len(), 1);
+    }
 }
 
 fn pending() -> String {
     PENDING.to_string()
+}
+
+fn ledger_body_eq(a: &str, b: &str) -> bool {
+    let strip = |s: &str| -> Option<Value> {
+        let mut v: Value = serde_json::from_str(s).ok()?;
+        if let Some(o) = v.as_object_mut() {
+            o.remove("generated_at");
+        }
+        Some(v)
+    };
+    match (strip(a), strip(b)) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    }
+}
+
+pub fn is_harness_failure(s: &str) -> bool {
+    let t = s.to_ascii_lowercase();
+    t.contains("could not compile")
+        || t.contains("error[e")
+        || t.contains("unresolved import")
+        || t.contains("cannot find module")
+        || t.contains("cannot find crate")
+        || t.contains("failed to compile")
+        || t.contains("expected one of")
+        || t.contains("importerror")
+        || t.contains("no module named")
+        || (t.contains("compiling ") && t.contains("error:"))
+}
+
+impl Ledger {
+    pub fn harness_error(&self) -> Option<&str> {
+        self.suite_error.as_deref().filter(|s| !s.is_empty())
+    }
+
+    /// First scenario in spec order that is not green or orphan.
+    pub fn next_ungreen<'a>(
+        &self,
+        features: &'a [Feature],
+        skip: &HashSet<String>,
+    ) -> Option<(&'a Feature, &'a crate::spec::Scenario)> {
+        for f in features {
+            for s in &f.scenarios {
+                let Some(rid) = s.rid.as_deref() else {
+                    continue;
+                };
+                if skip.contains(rid) {
+                    continue;
+                }
+                match self.entries.get(rid).map(|e| e.status.as_str()) {
+                    Some(GREEN) | Some(ORPHAN) => continue,
+                    _ => return Some((f, s)),
+                }
+            }
+        }
+        None
+    }
+
+    /// Suite compile dump, including ledgers that copied it onto every scenario
+    /// before `suite_error` existed.
+    pub fn display_harness_error(&self) -> Option<String> {
+        if let Some(s) = self.harness_error() {
+            return Some(s.to_string());
+        }
+        let dumps: Vec<&str> = self
+            .entries
+            .values()
+            .filter_map(|e| e.failure.as_deref())
+            .filter(|s| is_harness_failure(s) && *s != "tests did not compile")
+            .collect();
+        if dumps.len() < 2 {
+            return None;
+        }
+        let first = dumps[0];
+        let n = dumps.iter().filter(|d| **d == first).count();
+        let need = dumps.len().div_ceil(2).max(2);
+        if n >= need {
+            Some(first.to_string())
+        } else {
+            None
+        }
+    }
 }
 
 impl Entry {
@@ -81,6 +253,10 @@ pub struct Ledger {
     pub spec_lock: Value,
     pub regressions: Vec<Value>,
     pub mutation: Value,
+    /// Suite-level compile/harness dump. Not a per-scenario assertion.
+    pub suite_error: Option<String>,
+    /// Then or #observe: changed after Play locked the surface.
+    pub amendments: Vec<Value>,
 }
 
 impl Ledger {
@@ -110,6 +286,16 @@ impl Ledger {
                 .cloned()
                 .unwrap_or_default(),
             mutation: raw.get("mutation").cloned().unwrap_or(Value::Object(Default::default())),
+            suite_error: raw
+                .get("suite_error")
+                .and_then(|s| s.as_str())
+                .map(|s| s.to_string())
+                .filter(|s| !s.is_empty()),
+            amendments: raw
+                .get("amendments")
+                .and_then(|a| a.as_array())
+                .cloned()
+                .unwrap_or_default(),
         })
     }
 
@@ -130,9 +316,19 @@ impl Ledger {
             "spec_lock": self.spec_lock,
             "regressions": self.regressions,
             "mutation": self.mutation,
+            "suite_error": self.suite_error,
+            "amendments": self.amendments,
             "scenarios": scenarios,
         });
-        fs::write(path, serde_json::to_string_pretty(&payload)? + "\n")
+        let raw = serde_json::to_string_pretty(&payload)? + "\n";
+        // Play/ensure_play_lock rewrites this file. A new generated_at must not
+        // trip GuardedTurn while a filler is mid-turn.
+        if let Ok(old) = fs::read_to_string(path) {
+            if ledger_body_eq(&old, &raw) {
+                return Ok(());
+            }
+        }
+        fs::write(path, raw)
     }
 
     pub fn sync_spec(&mut self, features: &[Feature]) -> HashMap<String, i64> {
@@ -169,6 +365,7 @@ impl Ledger {
                     if e.spec_hash != h {
                         let prev = e.status.clone();
                         e.spec_hash = h.clone();
+                        e.last_run_at = None;
                         if prev == GREEN {
                             e.status = STALE.to_string();
                             e.record("spec_changed", serde_json::json!({"was": prev, "spec_hash": h}));
@@ -201,6 +398,9 @@ impl Ledger {
                         mutants_killed: None,
                         blind_spots: None,
                         history: vec![],
+                        first_colour: None,
+                        first_colour_at: None,
+                        was_ever_red: false,
                     };
                     e.record("added", serde_json::json!({"spec_hash": h}));
                     self.entries.insert(rid.clone(), e);
@@ -226,6 +426,11 @@ impl Ledger {
     ) -> ApplyOut {
         let nows = now();
         let mut new_regressions = Vec::new();
+        if !blocked.is_empty() && is_harness_failure(blocked) {
+            self.suite_error = Some(blocked.chars().take(4000).collect());
+        } else if blocked.is_empty() {
+            self.suite_error = None;
+        }
         let rids: Vec<String> = self.entries.keys().cloned().collect();
         for rid in rids {
             let e = self.entries.get_mut(&rid).unwrap();
@@ -234,6 +439,13 @@ impl Ledger {
             }
             match results.get(&rid) {
                 None if !blocked.is_empty() => {
+                    if !is_harness_failure(blocked) {
+                        if e.first_colour.is_none() {
+                            e.first_colour = Some(RED.to_string());
+                            e.first_colour_at = Some(nows.clone());
+                        }
+                        e.was_ever_red = true;
+                    }
                     if e.status == GREEN {
                         let reg = serde_json::json!({
                             "at": nows, "rid": rid, "name": e.name, "run": run_id,
@@ -244,7 +456,11 @@ impl Ledger {
                         e.record("REGRESSION", serde_json::json!({"run": run_id}));
                     }
                     e.status = RED.to_string();
-                    e.failure = Some(blocked.chars().take(2000).collect());
+                    e.failure = Some(if is_harness_failure(blocked) {
+                        "tests did not compile".into()
+                    } else {
+                        blocked.chars().take(2000).collect()
+                    });
                     e.last_run_at = Some(nows.clone());
                 }
                 None => {
@@ -262,9 +478,23 @@ impl Ledger {
                     e.verified_spec_hash.clear();
                     e.status = PENDING.to_string();
                     e.failure = Some("no test bound to this scenario".into());
+                    // The suite ran. No binding is a survey result, not "we never looked."
+                    e.last_run_at = Some(nows.clone());
                 }
                 Some(r) => {
                     e.last_run_at = Some(nows.clone());
+                    let colour = if r.outcome == "passed" { GREEN } else { RED };
+                    if e.first_colour.is_none() {
+                        e.first_colour = Some(colour.to_string());
+                        e.first_colour_at = Some(nows.clone());
+                        e.record(
+                            "first_colour",
+                            serde_json::json!({ "run": run_id, "colour": colour }),
+                        );
+                    }
+                    if colour == RED {
+                        e.was_ever_red = true;
+                    }
                     if r.outcome == "passed" {
                         if e.status == RED {
                             e.record("fixed", serde_json::json!({"run": run_id}));
@@ -342,7 +572,118 @@ impl Ledger {
             .collect();
         v.insert("total".into(), Value::from(total));
         v.insert("completion_pct".into(), Value::from(pct));
+        v.insert(
+            "never_red".into(),
+            Value::from(self.unfalsified_greens().len() as i64),
+        );
         v
+    }
+
+    /// Green without a recorded fail. Those are the greens to distrust.
+    pub fn unfalsified_greens(&self) -> Vec<&Entry> {
+        self.entries
+            .values()
+            .filter(|e| e.status == GREEN && !e.was_ever_red)
+            .collect()
+    }
+
+    pub fn note_amendment(&mut self, rid: &str, field: &str, was: &str, new_val: &str) {
+        let row = serde_json::json!({
+            "at": now(),
+            "rid": rid,
+            "field": field,
+            "was": was,
+            "now": new_val,
+        });
+        self.amendments.push(row.clone());
+        if let Some(e) = self.entries.get_mut(rid) {
+            e.first_colour = None;
+            e.first_colour_at = None;
+            e.was_ever_red = false;
+            if e.status == GREEN {
+                e.status = STALE.to_string();
+            }
+            e.record("amendment", row);
+        }
+    }
+
+    /// True after a suite pass on the current spec. Spec edits clear last_run_at.
+    pub fn suite_surveyed(&self) -> bool {
+        let live: Vec<&Entry> = self
+            .entries
+            .values()
+            .filter(|e| e.status != ORPHAN)
+            .collect();
+        !live.is_empty() && live.iter().any(|e| e.last_run_at.is_some())
+    }
+
+    /// Scenarios the spec names but no test bound — tests (or the Gherkin) need a pass.
+    pub fn unbound_after_survey(&self) -> usize {
+        self.entries
+            .values()
+            .filter(|e| {
+                e.status != ORPHAN
+                    && e.last_run_at.is_some()
+                    && (e.status == PENDING
+                        || e.failure
+                            .as_deref()
+                            .unwrap_or("")
+                            .to_lowercase()
+                            .contains("no test bound"))
+            })
+            .count()
+    }
+
+    /// Duplicate step definitions. Cucumber reports this as `[ambiguous]`;
+    /// that is a tests miss, not a Gherkin miss.
+    pub fn duplicate_step_failures(&self) -> usize {
+        self.entries
+            .values()
+            .filter(|e| {
+                if e.status == ORPHAN || e.status == GREEN {
+                    return false;
+                }
+                e.failure
+                    .as_deref()
+                    .unwrap_or("")
+                    .to_lowercase()
+                    .contains("multiple step definitions match")
+            })
+            .count()
+    }
+
+    /// Failures that look like the Gherkin is wrong, not the code.
+    pub fn spec_shaped_failures(&self) -> usize {
+        self.entries
+            .values()
+            .filter(|e| {
+                if e.status == ORPHAN || e.status == GREEN {
+                    return false;
+                }
+                let f = e.failure.as_deref().unwrap_or("").to_lowercase();
+                if f.contains("multiple step definitions match") {
+                    return false;
+                }
+                f.contains("underspec")
+                    || f.contains("not specified")
+                    || f.contains("contradict")
+                    || f.contains("example is missing")
+                    || f.contains("as a human")
+                    || f.contains("ask_human")
+                    || (f.contains("ambiguous") && !f.contains("step definition"))
+            })
+            .count()
+    }
+
+    /// A remaining ticket has no suite result on the current spec (edits clear last_run_at).
+    pub fn remaining_need_survey(&self, focus_journey: &str) -> bool {
+        let focus = focus_journey.trim();
+        self.entries.values().any(|e| {
+            e.status != GREEN
+                && e.status != ORPHAN
+                && (focus.is_empty() || e.epic == focus)
+                && e.last_run_at.is_none()
+        })
     }
 
     pub fn by_status(&self, status: &str) -> Vec<&Entry> {
@@ -372,5 +713,24 @@ impl HashSetLike {
     }
     fn contains(&self, s: &str) -> bool {
         self.0.contains(s)
+    }
+}
+
+#[cfg(test)]
+mod save_tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn unchanged_ledger_does_not_rewrite_generated_at() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ledger.json");
+        let led = Ledger::default();
+        led.save(&path).unwrap();
+        let first = fs::read(&path).unwrap();
+        std::thread::sleep(Duration::from_millis(1100));
+        led.save(&path).unwrap();
+        let second = fs::read(&path).unwrap();
+        assert_eq!(first, second, "Play must not bump ledger hash mid-fill");
     }
 }

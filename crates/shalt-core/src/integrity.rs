@@ -1,3 +1,4 @@
+use crate::config::Config;
 use crate::ledger::Ledger;
 use crate::spec::{duplicate_rids, file_hash, Feature};
 use std::collections::HashMap;
@@ -11,18 +12,67 @@ pub const BOARD_FILE: &str = ".shalt/board.json";
 
 pub static ZONES: &[(&str, &[&str])] = &[
     ("author", &["spec"]),
+    ("designer", &["mockups"]),
     ("stepwright", &["steps", "contract"]),
     ("implementer", &["src"]),
-    ("human", &["spec", "steps", "contract", "src"]),
+    ("auditor", &[]),
+    ("code_auditor", &[]),
+    ("human", &["spec", "steps", "contract", "src", "mockups"]),
 ];
 
 pub static READS: &[(&str, &[&str])] = &[
-    ("author", &["spec"]),
+    ("author", &["spec", "src"]),
+    ("designer", &["spec", "mockups"]),
     ("stepwright", &["spec", "steps", "contract"]),
-    ("implementer", &["spec", "contract", "src"]),
+    ("implementer", &["spec", "contract", "src", "mockups"]),
+    ("auditor", &["spec", "steps", "contract"]),
+    ("code_auditor", &["spec", "steps", "contract", "src", "mockups"]),
 ];
 
-pub const ALL_ZONES: &[&str] = &["spec", "steps", "contract", "src"];
+/// Logical defaults plus both `steps/` and `tests/` so a rust crate's cucumber
+/// harness and a leftover python steps dir are both guarded.
+pub const ALL_ZONES: &[&str] = &["spec", "steps", "tests", "contract", "src", "mockups"];
+
+pub fn write_zones(role: &str, steps: &str, src: &str) -> Vec<String> {
+    match role {
+        "author" => vec!["spec".into()],
+        "designer" => vec!["mockups".into()],
+        "stepwright" => vec![steps.to_string(), "contract".into()],
+        "implementer" => vec![src.to_string()],
+        "auditor" | "code_auditor" => vec![],
+        "human" => vec![
+            "spec".into(),
+            steps.to_string(),
+            "contract".into(),
+            src.to_string(),
+            "mockups".into(),
+        ],
+        _ => vec![],
+    }
+}
+
+pub fn read_zones(role: &str, steps: &str, src: &str) -> Vec<String> {
+    match role {
+        "author" => vec!["spec".into(), src.to_string()],
+        "designer" => vec!["spec".into(), "mockups".into()],
+        "stepwright" => vec!["spec".into(), steps.to_string(), "contract".into()],
+        "implementer" => vec![
+            "spec".into(),
+            "contract".into(),
+            src.to_string(),
+            "mockups".into(),
+        ],
+        "auditor" => vec!["spec".into(), steps.to_string(), "contract".into()],
+        "code_auditor" => vec![
+            "spec".into(),
+            steps.to_string(),
+            "contract".into(),
+            src.to_string(),
+            "mockups".into(),
+        ],
+        _ => write_zones(role, steps, src),
+    }
+}
 
 pub fn writes_for(role: &str) -> &'static [&'static str] {
     ZONES.iter().find(|(r, _)| *r == role).map(|(_, z)| *z).unwrap_or(&[])
@@ -145,13 +195,20 @@ pub struct GuardedTurn {
 
 impl GuardedTurn {
     pub fn enter(root: &Path, role: &str, backup_dir: &Path) -> std::io::Result<Self> {
-        let allowed: Vec<String> = writes_for(role).iter().map(|s| s.to_string()).collect();
-        let protected: Vec<String> = ALL_ZONES
+        let cfg = Config::load(root).unwrap_or_default();
+        let allowed = write_zones(role, &cfg.steps, &cfg.src);
+        let mut all: Vec<String> = ALL_ZONES.iter().map(|s| (*s).to_string()).collect();
+        all.push(cfg.steps.clone());
+        all.push(cfg.src.clone());
+        all.sort();
+        all.dedup();
+        let protected: Vec<String> = all
             .iter()
-            .filter(|z| !allowed.iter().any(|a| a == **z))
-            .map(|s| s.to_string())
+            .filter(|z| !allowed.iter().any(|a| a == *z))
+            .cloned()
             .collect();
-        let before = snapshot(root, ALL_ZONES);
+        let zone_refs: Vec<&str> = all.iter().map(|s| s.as_str()).collect();
+        let before = snapshot(root, &zone_refs);
         let led = root.join(LEDGER_FILE);
         let ledger_before = if led.exists() { file_hash(&led).ok() } else { None };
         let ledger_bytes = if led.exists() { fs::read(&led).ok() } else { None };
@@ -184,7 +241,14 @@ impl GuardedTurn {
     }
 
     pub fn commit(mut self) -> Result<(), IntegrityViolation> {
-        let after = snapshot(&self.root, ALL_ZONES);
+        let cfg = Config::load(&self.root).unwrap_or_default();
+        let mut all: Vec<String> = ALL_ZONES.iter().map(|s| (*s).to_string()).collect();
+        all.push(cfg.steps.clone());
+        all.push(cfg.src.clone());
+        all.sort();
+        all.dedup();
+        let zone_refs: Vec<&str> = all.iter().map(|s| s.as_str()).collect();
+        let after = snapshot(&self.root, &zone_refs);
         let d = diff_snap(&self.before, &after);
         let mut offences: HashMap<String, Vec<String>> = HashMap::new();
         for z in &self.protected {
@@ -283,7 +347,16 @@ fn filetime_set(p: &Path, t: SystemTime) -> std::io::Result<()> {
 }
 
 pub fn audit(ledger: &Ledger, features: &[Feature]) -> Vec<String> {
+    audit_in(None, ledger, features)
+}
+
+/// `root` lets verify read Then *bodies*, not just titles.
+pub fn audit_in(root: Option<&Path>, ledger: &Ledger, features: &[Feature]) -> Vec<String> {
     let mut problems = Vec::new();
+    if let Some(root) = root {
+        let defs = crate::bindings::load_step_defs(root);
+        problems.extend(crate::oracles::lint_then_defs(&defs));
+    }
     for (file, name) in duplicate_rids(features) {
         problems.push(format!("duplicate scenario id: {file} :: {name}"));
     }
@@ -300,6 +373,12 @@ pub fn audit(ledger: &Ledger, features: &[Feature]) -> Vec<String> {
     for e in ledger.entries.values() {
         if e.status == crate::ledger::GREEN && e.verified_spec_hash != e.spec_hash {
             problems.push(format!("green but unverified against current spec: {} {}", e.rid, e.name));
+        }
+        if e.status == crate::ledger::GREEN && !e.was_ever_red {
+            problems.push(format!(
+                "never red: {} '{}' — first colour was not a fail; distrust this green",
+                e.rid, e.name
+            ));
         }
         if e.status == crate::ledger::GREEN && e.mutants_killed == Some(0) {
             problems.push(format!(

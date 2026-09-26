@@ -7,6 +7,8 @@ actually trust.
 
 CLI: `shalt` — a Rust binary. Localhost UI: `shalt ui`. Models: `--backend grok` or `--backend qwen` (Ollama).
 
+License: [MIT](LICENSE) · [github.com/danbgray/shalt](https://github.com/danbgray/shalt)
+
 ### Why "Shalt"
 
 Requirements have been written in one grammatical form for fifty years: **"the system shall…"**
@@ -62,10 +64,10 @@ The reason this works cleanly: **`@rid:` is a Gherkin tag, and a tag survives in
 Cucumber-family report.** So binding a result back to a scenario needs no filename matching, no
 per-language shim, and no guessing — the identity is carried in the report itself.
 
-`shalt init --stack <python|javascript|go|java|ruby|dotnet|rust>` writes a starting config for
-that toolchain. A Python workspace keeps the rid reporter in `.shalt/shalt_report.py`, not in
-`steps/` — that zone is for the stepwright. Anything that emits Cucumber JSON or Cucumber
-Messages works without new code. `shall` on a new directory inits **Rust** (cucumber-rs).
+`shalt init` defaults to **Rust** (cucumber-rs). **Rust and JavaScript** (cucumber-js) are
+supported. Other cucumber-family languages should still *run* (`--stack python`, then
+go/java/ruby/dotnet); those presets are not supported yet. Binding is `@rid:` in the report, so
+a new language needs no shalt code if it emits Cucumber JSON or Cucumber Messages.
 
 The claim is exercised, not asserted: [`examples/rust-billing`](examples/rust-billing) is a real
 Cargo project driven through cucumber-rs. It found two bugs on first contact — a tag-spelling
@@ -223,13 +225,45 @@ into a new project. The sidebar lists projects; each has a board of rids. The CL
 everything the UI can.
 
 ```
-shalt ui              # start, or reopen the one that's already up
+shalt ui              # start (detaches; the command returns)
 shalt ui status
 shalt ui stop
-shalt ui restart
+shalt ui restart      # stop, start, return when /api/health answers
+shalt ui --foreground # keep the server in this terminal (Ctrl-C stops it)
+shalt stop            # UI, Play, and every other shalt process
 ```
 
-There is one UI. If 7700 is taken by something else, `shalt ui` binds the next free port in 7700–7799. `--port` is only used when nothing is running.
+There is one UI. If 7700 is taken by something else, `shalt ui` binds the next free port in 7700–7799. `--port` is only used when nothing is running. Logs: `~/.shalt/ui.log`.
+
+### macOS app (share with a friend)
+
+The app is a thin window around the same desk — a zip-and-send wrapper, not a second product.
+Inner-loop work still lives in **Ikonic** (`ikonic/` is the submodule) or `shalt ui`. The app
+does not replace either.
+
+Keys for Grok, OpenAI, and Anthropic live in **Keys** in the sidebar (saved to
+`~/.shalt/config.toml`, never shown back). Environment variables still win if they are set.
+
+```
+./scripts/macos-install.sh    # Shalt.app + `shalt` on PATH
+./scripts/macos-share.sh      # zip + dmg in dist/ to send a friend
+open -a Shalt
+```
+
+That puts **Shalt.app** in Applications and the **`shalt` CLI** in `~/.local/bin` (and Homebrew’s bin if writable). Opening the app does the same CLI install, so a friend who only copies the `.app` still gets `shalt` in a new terminal.
+
+The installer ad-hoc signs the app. First launch: right-click → Open if Gatekeeper complains.
+If `shalt ui` is already running, the app attaches to it instead of starting a second desk.
+
+Cloud keys (either path):
+
+```
+# ~/.shalt/config.toml
+[keys]
+xai = "xai-..."
+openai = "sk-..."
+anthropic = "sk-ant-..."
+```
 
 `shalt org add PATH` registers a git workspace. Overlay edits (rank, milestone, sprint) write
 the board; content edits of a story still write Gherkin.

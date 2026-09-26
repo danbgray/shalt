@@ -89,6 +89,7 @@ pub struct Scenario {
     pub tag_lines: Vec<usize>,
     pub rid_count: usize,
     pub inherited_tags: Vec<String>,
+    pub oracles: Vec<crate::oracles::ThenOracle>,
 }
 
 impl Scenario {
@@ -157,6 +158,22 @@ pub struct Feature {
 impl Feature {
     pub fn story(&self) -> Story {
         parse_story(&self.description)
+    }
+
+    /// `As a …`, else the first Gherkin step that names who acts.
+    pub fn inferred_actor(&self) -> String {
+        let st = self.story();
+        if !st.actor.is_empty() {
+            return st.actor;
+        }
+        for sc in &self.scenarios {
+            for step in &sc.steps {
+                if let Some(a) = crate::narrative::actor_from_step(step) {
+                    return a;
+                }
+            }
+        }
+        String::new()
     }
 
     pub fn epic(&self) -> String {
@@ -274,6 +291,7 @@ fn convert_scenario(
         line,
         tag_lines: tag_lines_for(raw_lines, line),
         inherited_tags: inherited.to_vec(),
+        oracles: Vec::new(),
     }
 }
 
@@ -329,14 +347,303 @@ pub fn parse_text(source: &str, rel: &str) -> Result<Option<Feature>, String> {
         }
     }
 
-    Ok(Some(Feature {
+    let mut feature = Feature {
         name: gf.name,
         file: rel.to_string(),
         tags: feature_tags,
         background,
         scenarios,
         description: gf.description.unwrap_or_default(),
-    }))
+    };
+    crate::oracles::attach_oracles(&mut feature, source);
+    Ok(Some(feature))
+}
+
+pub fn gherkin_scenario_count(features: &[Feature]) -> usize {
+    features.iter().map(|f| f.scenarios.len()).sum()
+}
+
+/// Markdown bullets and prose are not a spec. Play needs `Scenario:` lines.
+pub fn looks_like_gherkin(text: &str) -> bool {
+    text.lines().any(|l| {
+        let t = l.trim();
+        t.starts_with("Scenario:") || t.starts_with("Scenario Outline:")
+    })
+}
+
+/// Author writes must be a parseable Feature with Scenario + When + Then.
+/// Markdown headings and bullet lists are refused.
+pub fn spec_write_error(path: &str, content: &str) -> Option<String> {
+    let p = path.replace('\\', "/");
+    let name = p.rsplit('/').next().unwrap_or(&p);
+    if p.contains("spec/") || p.starts_with("spec/") || name.ends_with(".feature") {
+        if !name.ends_with(".feature") {
+            return Some("write spec/*.feature only".into());
+        }
+    } else {
+        return Some("author writes spec/*.feature only".into());
+    }
+    if content.lines().any(|l| {
+        let t = l.trim_start();
+        t.starts_with("# ") || t.starts_with("## ") || t.starts_with("### ")
+    }) {
+        return Some(concat!(
+            "do not use markdown headings. Write exactly:\n",
+            "@epic:recipes\n",
+            "Feature: Share recipes\n",
+            "  Scenario: Author publishes a titled recipe\n",
+            "    Given I am signed in as \"maya@example.com\"\n",
+            "    When I create a recipe titled \"Weeknight Tomato Pasta\"\n",
+            "    Then the recipe \"Weeknight Tomato Pasta\" is public\n",
+        ).into());
+    }
+    if !content.lines().any(|l| l.trim().starts_with("Feature:")) {
+        return Some("missing Feature: line".into());
+    }
+    if !looks_like_gherkin(content) {
+        return Some("missing Scenario: line. Bullet lists are not a spec.".into());
+    }
+    if !content.contains("@epic:") {
+        return Some("tag the Feature with @epic:<area> (one word)".into());
+    }
+    match parse_text(content, name) {
+        Err(e) => Some(format!("spec does not parse: {}", e.lines().next().unwrap_or("error"))),
+        Ok(None) => Some("spec parsed empty".into()),
+        Ok(Some(f)) => {
+            if f.scenarios.is_empty() {
+                return Some("Feature has no Scenario".into());
+            }
+            for s in &f.scenarios {
+                if s.steps.is_empty() {
+                    return Some(format!("Scenario {:?} has no steps", s.name));
+                }
+                let when = s.steps.iter().any(|st| {
+                    let k = st.split_whitespace().next().unwrap_or("");
+                    k.eq_ignore_ascii_case("when")
+                });
+                let then = s.steps.iter().any(|st| {
+                    let k = st.split_whitespace().next().unwrap_or("");
+                    k.eq_ignore_ascii_case("then")
+                });
+                if !when || !then {
+                    return Some(format!(
+                        "Scenario {:?} needs When and Then with concrete values",
+                        s.name
+                    ));
+                }
+            }
+            if let Some(err) = crate::oracles::missing_observe(content) {
+                return Some(err);
+            }
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod spec_write_tests {
+    use super::spec_write_error;
+
+    #[test]
+    fn markdown_essay_is_refused() {
+        let md = "# Feature: Recipe Sharing\n\n### Acceptance Criteria\n- Authors can write a recipe\n";
+        let err = spec_write_error("spec/recipe.feature", md).expect("refused");
+        assert!(
+            err.contains("markdown") || err.contains("Scenario") || err.contains("Feature"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn scenario_with_when_then_is_ok() {
+        let ok = "@epic:recipes\nFeature: Recipes\n  Scenario: Publish a link\n    Given I am signed in as \"maya@example.com\"\n    When I publish \"Weeknight Tomato Pasta\"\n    Then the recipe is public\n    #observe: unsigned GET of the public share URL shows the title\n";
+        assert_eq!(spec_write_error("spec/recipes.feature", ok), None);
+    }
+
+    #[test]
+    fn scenario_without_then_is_refused() {
+        let bad = "@epic:recipes\nFeature: Recipes\n  Scenario: Incomplete\n    Given I am signed in as \"maya@example.com\"\n";
+        assert!(spec_write_error("spec/recipes.feature", bad).unwrap().contains("When"));
+    }
+
+    #[test]
+    fn then_without_observe_is_refused() {
+        let bad = "@epic:recipes\nFeature: Recipes\n  Scenario: Publish a link\n    Given I am signed in as \"maya@example.com\"\n    When I publish \"Weeknight Tomato Pasta\"\n    Then the recipe is public\n";
+        let err = spec_write_error("spec/recipes.feature", bad).expect("refused");
+        assert!(err.contains("#observe:"), "{err}");
+    }
+}
+
+pub fn spec_is_playable(root: &Path) -> bool {
+    load_specs(&root.join("spec"), false)
+        .map(|fs| fs.iter().any(|f| !f.scenarios.is_empty()))
+        .unwrap_or(false)
+}
+
+/// First spec from the interview. Author 2B+ may override. Does not clobber
+/// a spec that already has Scenario: lines.
+pub fn seed_spec_from_plan(root: &Path, plan: &str) -> Result<Vec<String>, String> {
+    let spec = root.join("spec");
+    fs::create_dir_all(&spec).map_err(|e| e.to_string())?;
+    let existing = load_specs(&spec, false).unwrap_or_default();
+    if gherkin_scenario_count(&existing) > 0 {
+        return Ok(Vec::new());
+    }
+    let p = plan.to_ascii_lowercase();
+    let mut wrote = Vec::new();
+    for (name, body, hit) in seed_feature_bodies() {
+        if !hit(&p) {
+            continue;
+        }
+        if let Some(err) = spec_write_error(&format!("spec/{name}"), body) {
+            return Err(err);
+        }
+        let path = spec.join(name);
+        fs::write(&path, body).map_err(|e| e.to_string())?;
+        wrote.push(format!("spec/{name}"));
+    }
+    Ok(wrote)
+}
+
+fn seed_feature_bodies() -> Vec<(&'static str, &'static str, fn(&str) -> bool)> {
+    vec![
+        (
+            "recipes.feature",
+            r#"@epic:recipes
+Feature: Create and publish recipes
+  Scenario: Author publishes a titled recipe
+    Given I am signed in as "maya@example.com"
+    When I create a recipe titled "Weeknight Tomato Pasta"
+    And I add ingredient "tomatoes"
+    And I add step 1 "Boil water"
+    And I publish "Weeknight Tomato Pasta"
+    Then the recipe "Weeknight Tomato Pasta" is public
+    #observe: unsigned GET of the public share URL shows title Weeknight Tomato Pasta
+"#,
+            |p| p.contains("recipe") && (p.contains("title") || p.contains("publish")),
+        ),
+        (
+            "sharing.feature",
+            r#"@epic:sharing
+Feature: Public recipe link
+  Scenario: Anyone opens a public recipe without an account
+    Given a public recipe "Weeknight Tomato Pasta" at "/r/weeknight-tomato-pasta"
+    When an anonymous viewer opens "/r/weeknight-tomato-pasta"
+    Then they see title "Weeknight Tomato Pasta"
+    #observe: unsigned GET of /r/weeknight-tomato-pasta shows title Weeknight Tomato Pasta
+"#,
+            |p| p.contains("public") && (p.contains("link") || p.contains("account")),
+        ),
+        (
+            "video.feature",
+            r#"@epic:video
+Feature: Recipe video timestamps
+  Scenario: Cook jumps to a tagged step
+    Given I am signed in as "maya@example.com"
+    And a recipe "Weeknight Tomato Pasta" owned by "maya@example.com"
+    And the recipe has full video "https://example.com/pasta.mp4"
+    And step 1 of "Weeknight Tomato Pasta" is "Boil water"
+    When I tag step 1 at timestamp "00:00:12"
+    Then step 1 of "Weeknight Tomato Pasta" links to "00:00:12"
+    #observe: opening the step clip starts at 00:00:12
+"#,
+            |p| p.contains("video") || p.contains("timestamp"),
+        ),
+        (
+            "packets.feature",
+            r#"@epic:ingredients
+Feature: Ingredient packets
+  Scenario: Author builds a packet with an Amazon Fresh link
+    Given I am signed in as "maya@example.com"
+    And a public recipe "Weeknight Tomato Pasta" with ingredients:
+      | name     | quantity |
+      | tomatoes | 4        |
+    When the author creates packet "sauce" from all ingredients
+    And the author attaches Amazon Fresh order link "https://fresh.amazon.com/sauce" to packet "sauce"
+    Then packet "sauce" contains 1 items
+    #observe: packet sauce item count is 1
+    And the packet is linked to recipe "Weeknight Tomato Pasta"
+    #observe: packet sauce names recipe Weeknight Tomato Pasta
+    And packet "sauce" has Amazon Fresh order link "https://fresh.amazon.com/sauce"
+    #observe: packet sauce order URL is the Amazon Fresh link https://fresh.amazon.com/sauce
+"#,
+            |p| p.contains("amazon") || p.contains("packet") || p.contains("ingredient"),
+        ),
+        (
+            "patrons.feature",
+            r#"@epic:patrons
+Feature: Patron subscriptions
+  Scenario: Reader subscribes at five dollars a month
+    Given I am signed in as "maya@example.com"
+    When I enable patronage at "$5" per month
+    Then my profile shows patronage available at "$5" per month
+    #observe: patronage offer for maya@example.com is $5 per month
+  Scenario: Patron opens a patron-only recipe
+    Given "alex@example.com" offers patronage at "$5" per month
+    And "sam@example.com" is an active patron of "alex@example.com"
+    And a patron-only recipe "Patron Pasta" owned by "alex@example.com"
+    When "sam@example.com" opens the share URL for "Patron Pasta"
+    Then they see title "Patron Pasta"
+    #observe: signed-in patron GET of the share URL shows title Patron Pasta
+"#,
+            |p| p.contains("patron") || p.contains("$5") || p.contains("substack"),
+        ),
+    ]
+}
+
+#[cfg(test)]
+mod spec_seed_tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn seed_bodies_pass_spec_write_error() {
+        for (name, body, _) in seed_feature_bodies() {
+            assert_eq!(
+                spec_write_error(&format!("spec/{name}"), body),
+                None,
+                "{name} is not a valid spec"
+            );
+        }
+    }
+
+    #[test]
+    fn seed_from_recipe_interview() {
+        let t = tempfile::TempDir::new().unwrap();
+        let plan = concat!(
+            "A tool to share and create cooking recipes. Authors write a recipe with a title, ",
+            "ingredients, and ordered steps, then publish a public link anyone can open without an account. ",
+            "They can attach one full-recipe video and tag timestamps on each step. ",
+            "Ingredients group into packets with an Amazon Fresh order link. ",
+            "Patrons work the way Substack does: a reader subscribes at $5 a month."
+        );
+        let wrote = seed_spec_from_plan(t.path(), plan).unwrap();
+        assert!(
+            wrote.iter().any(|f| f.ends_with("recipes.feature")),
+            "{wrote:?}"
+        );
+        assert!(wrote.iter().any(|f| f.ends_with("sharing.feature")), "{wrote:?}");
+        assert!(wrote.iter().any(|f| f.ends_with("video.feature")), "{wrote:?}");
+        assert!(wrote.iter().any(|f| f.ends_with("packets.feature")), "{wrote:?}");
+        assert!(wrote.iter().any(|f| f.ends_with("patrons.feature")), "{wrote:?}");
+        assert!(spec_is_playable(t.path()));
+        assert_eq!(seed_spec_from_plan(t.path(), plan).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn seed_does_not_clobber_existing_scenarios() {
+        let t = tempfile::TempDir::new().unwrap();
+        fs::create_dir_all(t.path().join("spec")).unwrap();
+        fs::write(
+            t.path().join("spec/keep.feature"),
+            "@epic:keep\nFeature: Keep\n  Scenario: Already here\n    When I publish \"x\"\n    Then it is public\n",
+        )
+        .unwrap();
+        let wrote = seed_spec_from_plan(t.path(), "recipes title publish video patron $5").unwrap();
+        assert!(wrote.is_empty());
+        let body = fs::read_to_string(t.path().join("spec/keep.feature")).unwrap();
+        assert!(body.contains("Already here"));
+    }
 }
 
 pub fn load_specs(spec_dir: &Path, strict: bool) -> Result<Vec<Feature>, SpecParseError> {
@@ -377,6 +684,31 @@ pub fn load_specs(spec_dir: &Path, strict: bool) -> Result<Vec<Feature>, SpecPar
         return Err(SpecParseError { errors });
     }
     Ok(out)
+}
+
+/// Write a `.feature` under spec/. Rejects path escape.
+pub fn put_spec_file(spec_dir: &Path, file: &str, body: &str) -> Result<String, String> {
+    let rel = file
+        .trim()
+        .trim_start_matches("./")
+        .trim_start_matches("spec/")
+        .trim_start_matches('/');
+    if rel.is_empty()
+        || rel.contains("..")
+        || std::path::Path::new(rel).is_absolute()
+        || rel.as_bytes().contains(&b'\\')
+    {
+        return Err("spec path must stay under spec/".into());
+    }
+    if !rel.ends_with(".feature") {
+        return Err("only .feature files can be saved here".into());
+    }
+    let dest = spec_dir.join(rel);
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    fs::write(&dest, body).map_err(|e| e.to_string())?;
+    Ok(rel.to_string())
 }
 
 pub fn stamp_rids(spec_dir: &Path) -> std::io::Result<HashMap<String, String>> {
@@ -474,6 +806,118 @@ pub fn duplicate_rids(features: &[Feature]) -> Vec<(String, String)> {
         }
     }
     problems
+}
+
+/// Stamp `@rid:` on one scenario (`file` relative to spec/, `line` is Scenario: or tag line).
+pub fn stamp_scenario(spec_dir: &Path, file: &str, line: usize) -> Result<Option<String>, String> {
+    let path = spec_dir.join(file);
+    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let newline = if raw.contains("\r\n") { "\r\n" } else { "\n" };
+    let feat = parse_text(&raw.replace("\r\n", "\n"), file)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("{file} is not a feature"))?;
+    let sc = feat
+        .scenarios
+        .iter()
+        .find(|s| s.line == line || s.block_start() == line)
+        .ok_or_else(|| format!("no scenario at {file}:{line}"))?;
+    if let Some(rid) = &sc.rid {
+        return Ok(Some(rid.clone()));
+    }
+    let mut existing: HashSet<String> = HashSet::new();
+    if let Ok(all) = load_specs(spec_dir, true) {
+        for f in all {
+            for s in f.scenarios {
+                if let Some(r) = s.rid {
+                    existing.insert(r);
+                }
+            }
+        }
+    }
+    let mut rid = new_rid();
+    while existing.contains(&rid) {
+        rid = new_rid();
+    }
+    let mut lines: Vec<String> = raw.replace("\r\n", "\n").split('\n').map(|s| s.to_string()).collect();
+    if lines.last().map(|s| s.is_empty()).unwrap_or(false) {
+        lines.pop();
+    }
+    let idx = sc.block_start().saturating_sub(1);
+    let indent = lines
+        .get(idx)
+        .map(|line| line.chars().take_while(|c| c.is_whitespace()).collect::<String>())
+        .unwrap_or_else(|| "  ".into());
+    lines.insert(idx, format!("{indent}{RID_PREFIX}{rid}"));
+    let mut out = lines.join(newline);
+    out.push_str(newline);
+    fs::write(&path, out).map_err(|e| e.to_string())?;
+    Ok(Some(rid))
+}
+
+/// Replace a scenario's name and steps. Keeps existing @rid / @holdout unless `holdout` is set.
+pub fn rewrite_scenario(
+    spec_dir: &Path,
+    file: &str,
+    line: usize,
+    name: &str,
+    steps: &[String],
+    holdout: Option<bool>,
+) -> Result<(), String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("scenario name is empty".into());
+    }
+    let path = spec_dir.join(file);
+    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let newline = if raw.contains("\r\n") { "\r\n" } else { "\n" };
+    let normalized = raw.replace("\r\n", "\n");
+    let feat = parse_text(&normalized, file)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("{file} is not a feature"))?;
+    let sc = feat
+        .scenarios
+        .iter()
+        .find(|s| s.line == line || s.block_start() == line)
+        .ok_or_else(|| format!("no scenario at {file}:{line}"))?;
+    let mut lines: Vec<String> = normalized.split('\n').map(|s| s.to_string()).collect();
+    if lines.last().map(|s| s.is_empty()).unwrap_or(false) {
+        lines.pop();
+    }
+    let blocks = feat.blocks(lines.len());
+    let (_, start, end) = blocks
+        .into_iter()
+        .find(|(_, s, _)| *s == sc.block_start())
+        .ok_or_else(|| "could not locate scenario block".to_string())?;
+    let sidx = start.saturating_sub(1);
+    let eidx = end.saturating_sub(1).min(lines.len());
+    let indent = lines
+        .get(sidx)
+        .map(|l| l.chars().take_while(|c| c.is_whitespace()).collect::<String>())
+        .unwrap_or_else(|| "  ".into());
+    let keep_holdout = holdout.unwrap_or_else(|| sc.is_holdout());
+    let mut block = Vec::new();
+    if keep_holdout {
+        block.push(format!("{indent}{HOLDOUT_TAG}"));
+    }
+    if let Some(rid) = &sc.rid {
+        block.push(format!("{indent}{RID_PREFIX}{rid}"));
+    }
+    block.push(format!("{indent}Scenario: {name}"));
+    for step in steps {
+        let t = step.trim();
+        if t.is_empty() {
+            continue;
+        }
+        block.push(format!("{indent}  {t}"));
+    }
+    block.push(String::new());
+    lines.splice(sidx..eidx, block);
+    let mut out = lines.join(newline);
+    if !out.ends_with(newline) {
+        out.push_str(newline);
+    }
+    fs::write(&path, out).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// Drop scenario blocks from feature files. `drop` is `(relative path, block_start line)`.

@@ -1,12 +1,14 @@
 [workspace]
 resolver = "2"
-members = ["crates/shalt-core", "crates/shalt"]
+members = ["crates/shalt-core", "crates/shalt", "crates/shalt-app"]
+default-members = ["crates/shalt-core", "crates/shalt"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/rivletio/shalt"
+repository = "https://github.com/danbgray/shalt"
+authors = ["Daniel Gray"]
 
 [workspace.dependencies]
 shalt-core = { path = "crates/shalt-core" }

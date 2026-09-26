@@ -12,6 +12,9 @@ shalt [--root DIR] [--backend NAME] [--fixtures DIR] [--model M] [--base-url URL
 | `--model` | per backend | override the backend's default model |
 | `--base-url` | per backend | override the API base URL |
 | `--color` | `auto` | `auto`, `always`, `never`. `NO_COLOR` always wins |
+| `--tags` | — | Cucumber tag expression (`@wip`, `not @holdout`) |
+| `--format` | `auto` | `auto`, `pretty`, `progress`, `play` |
+| `--dry-run` | off | list matching scenarios; do not run the harness |
 | `--editor` | auto | which editor a clicked path opens |
 
 ## Colour and clickable paths
@@ -62,10 +65,92 @@ and not escape codes.
 
 ## Commands
 
+### `shalt login [--host https://shalt.dev]`
+Opens GitHub via the Space host. Stores `~/.shalt/credentials.toml`. The token is never printed. `shalt whoami` / `shalt logout`. `shalt connect github` is the same grant.
+
+### `shalt onboard PATH_OR_URL [-p NOTE] [--dir DIR]`
+Wrap an existing codebase. `PATH` is a directory, or a GitHub URL (`github.com/org/repo`, HTTPS, or `git@github.com:…`). A URL is cloned with local `git` (your SSH keys), then wrapped. Agents keep using this CLI; they do not log into the website.
+
 ### `shalt init [--stack NAME] [--name N]`
 Scaffolds the workspace: `spec/`, `contract/`, the configured steps and src zones, `.shalt/`,
-an empty ledger, and `shalt.toml` from the chosen stack preset. Stacks: `python` (default),
-`javascript`, `go`, `java`, `ruby`, `dotnet`.
+an empty ledger, and `shalt.toml` from the chosen stack preset. **Rust and JavaScript are
+supported.** Any cucumber-family language should *run* (`--stack python|go|…`). Support
+order after rust and javascript: python, then the rest. Unsupported init prints a note; it does
+not refuse.
+
+### `shalt job list|show|waiting|ask|chat|decide|answer|pause|resume`
+
+Jobs are the workers. When Play hits `ask_human`, the job is `waiting` — same state as the desk dialog.
+
+```
+shalt job waiting
+shalt job ask                  # the only waiting job, or pass an id
+shalt job chat J-xxx "yes, add is_manufacturable on the product"
+shalt --backend grok job chat J-xxx "use ProductId, not &str"
+shalt --backend grok job decide J-xxx
+shalt job answer J-xxx "Add fn is_manufacturable(product) -> bool on ErpSystem. create_bom does not imply it."
+```
+
+`chat` and `decide` talk to the **answer agent** — `--backend` / `--model` pick who drafts; Play stays on the job's worker. `ANSWER:` is a draft. `answer` commits it and Play continues. Claude, Grok, Codex, and the UI share the same turn log. The desk dialog has the same agent picker and a **Decide** button.
+
+### `shalt sprint open|list|assign|close|retro`
+
+Sprints live on the overlay. Estimate tokens on each ticket, Play the loop, then close the sprint. The retro is estimate vs tokens spent (jobs billed to that sprint). The next ticket default is scaled by that accuracy.
+
+```
+shalt board estimate S-e6c9cbf6 120000
+shalt sprint open W38
+shalt sprint assign S-e6c9cbf6 C-1
+shalt play
+shalt sprint close
+shalt sprint retro
+```
+
+### `shalt play [--max-steps N] [--yolo]`
+
+Thin loop for agents and the terminal. Same engine as UI Play.
+
+1. Registers `--root` in the local org if needed.
+2. Pauses other projects so this one owns the model.
+3. Writes tests (`steps`), runs them, writes code (`src`), runs them again until visible scenarios are green (or a stage fails).
+
+`--yolo` turns on Yolo for this project: `ask_human` takes the model's guess and Play does not wait. Stays on until `shalt org yolo <id> off`. The desk has the same **Yolo** toggle.
+
+Alias: `shalt loop`. Lines on stdout start with `PLAY` so Hermes / Claude / Codex skills can parse them. Does **not** start the UI.
+
+```
+shalt --root /path/to/workspace play
+shalt --root /path/to/workspace play --yolo
+shalt org play <project-id>
+shalt org yolo <project-id> on
+```
+
+### `shalt journal`
+
+Prints the project blog. Short **progress** posts (`JOURNAL:`) as work moves. Longer **features**
+(`FEATURE:`) when something notable happens (first spec, storyboards, a journey going green).
+
+```
+shalt --root /path/to/workspace journal
+```
+
+### `shalt design`
+
+Draws storyboards under `mockups/`: HTML/CSS/JS prototypes, one film per journey, hand-sketched until a scenario is green. Same job as desk Design. Play runs this after spec exists, before language/tests. API-only journeys can be `kind: none`.
+
+```
+shalt --root /path/to/workspace --backend grok design
+```
+
+### `shalt stop`
+
+Stops every running shalt process: the UI, `play` / `loop`, and any other shalt binary. Parks running and pending jobs, pauses every project, then SIGTERM (and SIGKILL if needed). Waiting jobs stay waiting. Does not touch Ollama. Play after this is a deliberate start.
+
+`shalt ui stop` still only stops the UI.
+
+```
+shalt stop
+```
 
 ### `shalt author "<request>"`
 Runs the author role. Writes Gherkin feature files and user stories into `spec/`. Guarded like
@@ -94,13 +179,39 @@ Ends on all-visible-upheld or at `--max-turns` (default 6), then runs a **final 
 including holdouts** and reports overfitting if only the held-out ones fail. `--strict` aborts on
 an integrity violation instead of continuing to the next turn.
 
-### `shalt run`
-Runs the suite once and updates the ledger. Reports regressions by name and any test not bound to
-a scenario.
+### `shalt run [FEATURE…]` / Cucumber-style paths
+
+Runs the suite (or a slice of it) and prints a Cucumber-shaped report. Feature paths on the
+binary are the same command: `shalt spec/*.feature` becomes `shalt run spec/….feature`.
+`shalt spec delete` is unchanged — `delete` is not a file.
+
+```
+shalt spec/*.feature
+shalt spec/invoices.feature:12
+shalt spec/*.feature --tags @wip
+shalt run --tags "not @holdout"
+shalt spec/*.feature --format progress
+shalt spec/*.feature --dry-run
+```
+
+`--tags` is a Cucumber tag expression (`@wip`, `not @wip`, `@wip and not @holdout`, `@wip or @slow`,
+comma as OR). `--format auto|pretty|progress|play` — `auto` is pretty on a tty, progress when
+piped. `--dry-run` lists matching scenarios without executing the harness.
+
+Pretty output is Feature / Scenario / steps, coloured by result, then:
+
+```
+1 scenario (1 failed)
+3 steps (1 failed, 2 passed)
+0m1.204s
+```
+
+Exit `1` if a selected scenario failed, `3` if the harness could not run. Updates the ledger for
+whatever actually ran.
 
 ### `shalt status`
-The ledger as a progress view: every scenario by feature with status, holdout marker and id, then
-the bar and counts. Warns when removed scenarios are excluded from the figure.
+The spec as a Cucumber pretty (or progress) report from the ledger. Honours `--tags` and
+`--format`. Pending is undefined (no test); stale is pending.
 
 ### `shalt tree`
 The breakdown as a tree: epic → story → scenario, with each story's user story beneath it.
@@ -145,7 +256,7 @@ for reproducibility, `--verbose` shows each mutant as it runs and the weakest or
 ```bash
 export XAI_API_KEY=...
 
-shalt --root ./work init --stack python --name "Invoicing"
+shalt --root ./work init --name "Invoicing"
 shalt --root ./work --backend grok author "Invoice totals, currency display, overdue reminders"
 
 $EDITOR work/spec/*.feature          # the review gate, and the cheap one

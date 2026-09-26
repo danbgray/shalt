@@ -1,7 +1,8 @@
 use shalt_core::config::init_workspace;
 use shalt_core::scaffold::{
-    apply_js_contract_stubs, apply_step_stubs, is_fillable_stub, parse_js_contract,
-    quarantine_duplicate_step_files, steps_source_ok, write_js_world_if_missing,
+    apply_js_contract_stubs, apply_step_stubs, fill_all_js_pending_oracles,
+    fill_js_pending_oracles, is_fillable_stub,
+    parse_js_contract, quarantine_duplicate_step_files, steps_source_ok, write_js_world_if_missing,
 };
 use shalt_core::list_step_files;
 use shalt_core::DUP_STEPS_DIR;
@@ -173,6 +174,13 @@ Feature: Packets
         "steps/ingredients.steps.js",
         "function (not arrow) World;\nGiven a public recipe\n"
     ));
+    assert!(
+        !steps_source_ok(
+            "steps/recipes.steps.js",
+            "When('I add ingredient {string}', function (name) { this.x = name; });\nWhen('I add ingredient {string}', function (name) { this.x = name; });\n"
+        ),
+        "the same phrase twice in one file is a parse miss, not a bind"
+    );
     apply_step_stubs(t.path(), "ingredients").unwrap();
     let body = std::fs::read_to_string(t.path().join("steps/ingredients.steps.js")).unwrap();
     assert!(body.contains("return 'pending'"), "{body}");
@@ -285,4 +293,81 @@ fn promote_is_a_no_op_without_final_css() {
     let t = TempDir::new().unwrap();
     init_workspace(t.path(), "javascript", "cook").unwrap();
     assert!(shalt_core::promote_prototype(t.path()).unwrap().is_empty());
+}
+
+#[test]
+fn fill_js_pending_oracles_replaces_pending_create_recipe() {
+    let t = TempDir::new().unwrap();
+    std::fs::write(
+        t.path().join("shalt.toml"),
+        "[project]\nstack = \"javascript\"\n[zones]\nsteps = \"steps\"\nsrc = \"src\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(t.path().join("steps")).unwrap();
+    std::fs::create_dir_all(t.path().join("src")).unwrap();
+    std::fs::write(
+        t.path().join("src/recipes.js"),
+        "export function createRecipe(o, t) { return { title: t, ingredients: [] }; }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        t.path().join("steps/recipes.steps.js"),
+        "import { Given, When, Then } from '@cucumber/cucumber';\nimport assert from 'node:assert/strict';\n\nWhen('I create a recipe titled {string}', function (a0) {\n  return 'pending';\n});\nThen('the recipe {string} has 3 ingredients', function (a0) {\n  return 'pending';\n});\n",
+    )
+    .unwrap();
+    let filled = fill_js_pending_oracles(t.path(), "recipes").unwrap();
+    assert_eq!(filled.len(), 2, "{filled:?}");
+    let body = std::fs::read_to_string(t.path().join("steps/recipes.steps.js")).unwrap();
+    assert!(!body.contains("return 'pending'"), "{body}");
+    assert!(body.contains("createRecipe"), "{body}");
+    assert!(
+        body.contains("from '../src/store.js'") || body.contains("from '../src/recipes.js'"),
+        "{body}"
+    );
+}
+
+#[test]
+fn fill_js_pending_oracles_covers_vague_author_phrases() {
+    let t = TempDir::new().unwrap();
+    std::fs::write(
+        t.path().join("shalt.toml"),
+        "[project]\nstack = \"javascript\"\n[zones]\nsteps = \"steps\"\nsrc = \"src\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(t.path().join("steps")).unwrap();
+    std::fs::create_dir_all(t.path().join("src")).unwrap();
+    std::fs::write(
+        t.path().join("src/store.js"),
+        "export function createRecipe() {}\nexport function publish() {}\nexport function resetStore() {}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        t.path().join("steps/tool.steps.js"),
+        concat!(
+            "import { Given, When, Then } from '@cucumber/cucumber';\n",
+            "When('an author writes a recipe with a title, ingredients, and ordered steps', function () {\n  return 'pending';\n});\n",
+            "When('the tool publishes the recipe publicly without an account', function () {\n  return 'pending';\n});\n",
+            "Then('anyone can open the public link to view the content', function () {\n  return 'pending';\n});\n",
+        ),
+    )
+    .unwrap();
+    let filled = fill_js_pending_oracles(t.path(), "tool").unwrap();
+    assert!(filled.len() >= 3, "{filled:?}");
+    let body = std::fs::read_to_string(t.path().join("steps/tool.steps.js")).unwrap();
+    assert!(!body.contains("return 'pending'"), "{body}");
+    assert!(body.contains("createRecipe"), "{body}");
+    assert!(body.contains("publish"), "{body}");
+    assert!(body.contains("from '../src/store.js'"), "{body}");
+    assert!(t.path().join("src/store.js").is_file());
+    let store = std::fs::read_to_string(t.path().join("src/store.js")).unwrap();
+    assert!(store.contains("export function createRecipe"), "{store}");
+}
+
+#[test]
+fn fill_live_tree_when_env_set() {
+    let Ok(root) = std::env::var("SHALT_FILL_ROOT") else {
+        return;
+    };
+    let filled = fill_all_js_pending_oracles(std::path::Path::new(&root)).unwrap();
+    eprintln!("filled {}", filled.len());
 }

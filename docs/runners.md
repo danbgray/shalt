@@ -46,7 +46,7 @@ removed the whole class of bug.
 ```toml
 [project]
 name  = "Invoicing"
-stack = "python"
+stack = "rust"
 
 [zones]
 steps = "steps"          # step definitions; written by the stepwright only
@@ -100,21 +100,24 @@ An unknown format is rejected at load time rather than silently treated as empty
 
 ## Stack presets
 
-`shalt init --stack <python|javascript|go|java|ruby|dotnet>`. These are **starting points, not
-guarantees** — each needs its own toolchain present, and the command will usually want editing.
+Gherkin + `@rid:` + a Cucumber-family report is how *any* language runs. **Rust and JavaScript
+are supported.** Next: python. The rest should still run if the toolchain is present.
 
-| stack | runner | format | default zones |
-|---|---|---|---|
-| `python` | `pytest` + `pytest-bdd` + shalt's plugin | `shalt` | `steps/`, `src/` |
-| `javascript` | `npx cucumber-js --format message:{report}` | `cucumber-messages` | `steps/`, `src/` |
-| `go` | `godog run --format=cucumber > {report}` | `cucumber-json` | `features/`, `internal/` |
-| `java` | `mvn test -Dcucumber.plugin=json:{report}` | `cucumber-json` | `src/test/java`, `src/main/java` |
-| `ruby` | `bundle exec cucumber --format json --out {report}` | `cucumber-json` | `features/step_definitions`, `lib/` |
-| `dotnet` | `dotnet test` + Reqnroll Cucumber output | `cucumber-json` | `Tests/`, `src/` |
-| `rust` | `cargo test --test cucumber` + cucumber-rs `writer::Json` | `cucumber-json` | `tests/`, `src/` |
+`shalt init --stack rust` (default) or `--stack javascript`. `--stack python|go|java|ruby|dotnet`
+writes a preset and a note; it does not refuse.
 
-The Rust preset is the one exercised against a real toolchain — see
-`examples/rust-billing/`. Its zones map onto Cargo's own layout, so nothing needs rearranging.
+| stack | support | runner | format | default zones |
+|---|---|---|---|---|
+| `rust` | **supported** | `cargo test --test shalt` (cucumber crate as the Gherkin runner) | `cucumber-json` | `tests/`, `src/` |
+| `javascript` | **supported** | `npx cucumber-js --import {steps}/**/*.js --format message:{report}` | `cucumber-messages` | `steps/`, `src/` |
+| `python` | later | `pytest` + `pytest-bdd` + workspace reporter | `shalt` | `steps/`, `src/` |
+| `go` | later | `godog run --format=cucumber > {report}` | `cucumber-json` | `features/`, `internal/` |
+| `java` | later | `mvn test -Dcucumber.plugin=json:{report}` | `cucumber-json` | `src/test/java`, `src/main/java` |
+| `ruby` | later | `bundle exec cucumber --format json --out {report}` | `cucumber-json` | `features/step_definitions`, `lib/` |
+| `dotnet` | later | `dotnet test` + Reqnroll Cucumber output | `cucumber-json` | `Tests/`, `src/` |
+
+The Rust preset is exercised against a real toolchain — see `examples/rust-billing/`. Its zones
+map onto Cargo's own layout. JavaScript uses cucumber-js ESM under `steps/` and `src/`.
 
 Every preset is asserted to load and to substitute all placeholders.
 → `test_every_preset_writes_a_loadable_config`, `test_config_substitutes_workspace_paths`

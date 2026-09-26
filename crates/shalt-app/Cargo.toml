@@ -1,0 +1,25 @@
+[package]
+name = "shalt-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Shalt desktop desk"
+default-run = "Shalt"
+
+[[bin]]
+name = "Shalt"
+path = "src/main.rs"
+
+[dependencies]
+shalt = { path = "../shalt" }
+shalt-core.workspace = true
+tauri = { version = "2", features = [] }
+tokio.workspace = true
+dirs.workspace = true
+url = "2"
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }

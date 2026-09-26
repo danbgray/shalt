@@ -71,6 +71,38 @@ fn grab(re: &Regex, text: &str) -> String {
         .unwrap_or_default()
 }
 
+fn role_is_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"(?i)\brole\s+is\s+"([^"]+)""#).unwrap())
+}
+fn i_am_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"(?i)\bI\s+am\s+(?:an?|the)\s+([A-Za-z][A-Za-z0-9_-]*)").unwrap()
+    })
+}
+fn who_does_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"(?i)^\s*(?:when|and|but)\s+the\s+([A-Za-z][A-Za-z0-9_-]*)\s+(?:opens?|clicks?|sets?|sees?|awards?|binds?|exports?|imports?|switches?|filters?|seals?|quotes?|creates?|enters?|selects?|chooses?|navigates|clears?|fills?|uploads?|downloads?)\b").unwrap()
+    })
+}
+
+/// Actor named in a Gherkin step (`the role is "buyer"`, `When the seller clicks`).
+pub fn actor_from_step(step: &str) -> Option<String> {
+    let s = step.trim();
+    if let Some(c) = role_is_re().captures(s) {
+        return Some(c[1].trim().to_string());
+    }
+    if let Some(c) = i_am_re().captures(s) {
+        return Some(c[1].trim().to_string());
+    }
+    if let Some(c) = who_does_re().captures(s) {
+        return Some(c[1].trim().to_string());
+    }
+    None
+}
+
 pub fn parse_story(description: &str) -> Story {
     Story {
         actor: grab(actor_re(), description),

@@ -1,13 +1,13 @@
 //! Packed first messages for write-pool models. No workspace dump, no copy-paste cheat-sheet.
 
-use crate::alloc::is_write_model;
 use crate::bindings::{step_has_table, step_kw_and_phrase};
 use crate::spec::Feature;
 
 pub const CANNED_JS: &str = "\
-Example (fill pending bodies; keep the signatures):\n\
-Given('I am signed in as {string}', function (email) {\n\
-  this.currentUser = email;\n\
+Example (import src, assert, keep the signature):\n\
+import { createRecipe } from '../src/recipes.js';\n\
+When('I create a recipe titled {string}', function (title) {\n\
+  this.lastRecipe = createRecipe(this.currentUser, title);\n\
 });\n";
 
 pub const CHEAT_SHEET: &str = "function (not arrow)";
@@ -27,53 +27,38 @@ pub struct StepBrief {
 
 pub fn stepwright_system(model: &str, stack: &str) -> String {
     let stack = if stack.is_empty() { "rust" } else { stack };
-    let small = is_write_model(model) && !model.contains("8b");
-    if small {
-        format!(
-            "You are the STEPWRIGHT. Fill pending bodies in the one steps file in the brief. \
-Do not change signatures. Do not add files. Do not rewrite a working step. \
-Stack: {stack}. Call done() when pending bodies for this journey are filled. \
-Do not write a blog file."
-        )
-    } else {
-        format!(
-            "You are the STEPWRIGHT in a shalt BDD pipeline. You see the spec and NOTHING of src/. \
-Fill pending step bodies for this journey only. Keep existing signatures. \
-Never define the same Given/When/Then phrase twice. Do not add extra step files. \
-Stack: {stack}. Write complete files, not diffs. Call done() when this journey's pending bodies are filled. \
-Do not write a blog file. A short JOURNAL: line in done() is enough."
-        )
-    }
+    let _ = model;
+    format!(
+        "You are the STEPWRIGHT. Fill pending bodies for ONE scenario in the brief. \
+Import from src/. Assert. Do not return pending. Do not change signatures. Do not add files. \
+Stack: {stack}. done() is refused while those bodies are still pending."
+    )
 }
 
 pub fn stepwright_user(b: &StepBrief) -> String {
     let mut lines = vec![
-        format!("Fill pending bodies in `{}` for journey `{}`.", b.file_rel, b.journey),
-        "Do not change signatures. Do not add files.".into(),
+        format!(
+            "Fill this ONE scenario in `{}` (journey `{}`). Other pending bodies can wait.",
+            b.file_rel, b.journey
+        ),
+        "Do not change signatures. Do not add files. Import from src/. Assert.".into(),
         String::new(),
         CANNED_JS.trim_end().into(),
         String::new(),
-        format!("File `{}`:", b.file_rel),
+        format!("Pending bodies to fill in `{}`:", b.file_rel),
         b.file_text.clone(),
     ];
     if !b.unbound.is_empty() {
         lines.push(String::new());
-        lines.push("Unbound scenarios:".into());
-        for u in b.unbound.iter().take(14) {
+        lines.push("This scenario:".into());
+        for u in b.unbound.iter().take(20) {
             lines.push(u.clone());
-        }
-    }
-    if !b.bound_phrases.is_empty() {
-        lines.push(String::new());
-        lines.push("Already bound (do not redefine):".into());
-        for p in b.bound_phrases.iter().take(40) {
-            lines.push(format!("- {p}"));
         }
     }
     if !b.contract_names.is_empty() {
         lines.push(String::new());
-        lines.push("Contract exports:".into());
-        for n in &b.contract_names {
+        lines.push("Call these from src/:".into());
+        for n in b.contract_names.iter().take(24) {
             lines.push(format!("- {n}"));
         }
     }
@@ -83,28 +68,96 @@ pub fn stepwright_user(b: &StepBrief) -> String {
     out
 }
 
+pub fn scenario_lines(f: &Feature, s: &crate::spec::Scenario) -> Vec<String> {
+    let mut out = vec![format!(
+        "- {} {}",
+        s.rid.clone().unwrap_or_default(),
+        s.name
+    )];
+    let mut last = String::new();
+    for st in f.background.iter().chain(s.steps.iter()) {
+        if st.lines().next().unwrap_or("").trim().starts_with('|') {
+            continue;
+        }
+        let (kw, phrase) = step_kw_and_phrase(st, &last);
+        last = kw.clone();
+        let table = if step_has_table(st) { " [table]" } else { "" };
+        out.push(format!("    {kw} {phrase}{table}"));
+    }
+    out
+}
+
 pub fn unbound_lines(features: &[Feature], journey: &str) -> Vec<String> {
-    let mut out = Vec::new();
     for f in features {
         if crate::bindings::journey_of(f) != journey {
             continue;
         }
-        for s in &f.scenarios {
-            let rid = s.rid.clone().unwrap_or_default();
-            out.push(format!("- {} {}", rid, s.name));
-            let mut last = String::new();
-            for st in &s.steps {
-                if st.lines().next().unwrap_or("").trim().starts_with('|') {
-                    continue;
-                }
-                let (kw, phrase) = step_kw_and_phrase(st, &last);
-                last = kw.clone();
-                let table = if step_has_table(st) { " [table]" } else { "" };
-                out.push(format!("    {kw} {phrase}{table}"));
-            }
+        if let Some(s) = f.scenarios.first() {
+            return scenario_lines(f, s);
         }
     }
-    out
+    Vec::new()
+}
+
+/// Bodies in `file_text` that this scenario still needs. Empty → show the whole file.
+pub fn pending_blocks_for(file_text: &str, f: &Feature, s: &crate::spec::Scenario) -> String {
+    let mut last = String::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut blocks = Vec::new();
+    for st in f.background.iter().chain(s.steps.iter()) {
+        if st.lines().next().unwrap_or("").trim().starts_with('|') {
+            continue;
+        }
+        let (kw, phrase) = step_kw_and_phrase(st, &last);
+        last = kw.clone();
+        if !seen.insert(format!("{kw}|{phrase}")) {
+            continue;
+        }
+        if let Some(block) = extract_js_fn(file_text, &kw, &phrase) {
+            blocks.push(block);
+        }
+    }
+    blocks.join("\n\n")
+}
+
+fn extract_js_fn(src: &str, kw: &str, pattern: &str) -> Option<String> {
+    let title = match kw {
+        "when" => "When",
+        "then" => "Then",
+        _ => "Given",
+    };
+    let a = format!("{title}('{pattern}'");
+    let b = format!("{title}(\"{pattern}\"");
+    let i = src.find(&a).or_else(|| src.find(&b))?;
+    let rest = &src[i..];
+    let end = rest.find("});")?;
+    Some(rest[..=end + 2].trim().to_string())
+}
+
+/// `export function name` in top-level `src/*.js`. Used when the contract markdown is not a surface.
+pub fn src_export_names(root: &std::path::Path) -> Vec<String> {
+    let dir = root.join("src");
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let re = regex::Regex::new(r"export\s+(?:async\s+)?function\s+([A-Za-z_][A-Za-z0-9_]*)")
+        .expect("export fn");
+    let mut names = Vec::new();
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.extension().and_then(|s| s.to_str()) != Some("js") {
+            continue;
+        }
+        let Ok(s) = std::fs::read_to_string(&p) else {
+            continue;
+        };
+        for cap in re.captures_iter(&s) {
+            names.push(cap[1].to_string());
+        }
+    }
+    names.sort();
+    names.dedup();
+    names
 }
 
 pub fn uses_packed_brief(role: &str) -> bool {
@@ -136,5 +189,19 @@ mod tests {
         assert!(u.contains("steps/ingredients.steps.js"));
         assert!(u.contains("createPacket"));
         assert!(u.contains(CANNED_JS.lines().next().unwrap()));
+        assert!(u.contains("ONE scenario"));
+        assert!(s.contains("done() is refused"));
+        let last = stepwright_system("qwen3:8b", "javascript");
+        assert!(last.contains("ONE scenario"));
+        assert!(!last.contains("Write complete files"));
+        assert!(last.contains("done() is refused"));
+    }
+
+    #[test]
+    fn pending_blocks_are_one_function() {
+        let src = "Given('x', function () { return 'pending'; });\nWhen('y', function () { return 'pending'; });\n";
+        let block = extract_js_fn(src, "given", "x").expect("fn");
+        assert!(block.contains("Given('x'"));
+        assert!(!block.contains("When('y'"));
     }
 }

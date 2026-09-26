@@ -131,6 +131,14 @@ fn stage_for(
             }
             copy_rel(root, stage, &rel)?;
         }
+        let ft = root.join(".shalt/fill-target.json");
+        if ft.is_file() {
+            let dest = stage.join(".shalt/fill-target.json");
+            if let Some(parent) = dest.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let _ = fs::copy(&ft, &dest);
+        }
         if hide_holdouts {
             let spec = stage.join("spec");
             if spec.exists() {
@@ -277,7 +285,7 @@ fn mirror_back(stage: &Path, root: &Path, zones: &[&str]) -> std::io::Result<(Ve
 }
 
 fn allowed_focused_writes(cfg: &Config, focus: &str) -> Vec<String> {
-    let mut v = vec!["contract/interface.md".into()];
+    let mut v = Vec::new();
     if cfg.stack == "javascript" {
         v.push(format!(
             "{}/{focus}.steps.js",

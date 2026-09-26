@@ -5,7 +5,7 @@ use crate::mockups::journey_slug;
 use crate::runner::list_step_files;
 use crate::spec::{Feature, Scenario};
 use regex::Regex;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::OnceLock;
 
@@ -15,6 +15,7 @@ pub struct StepDef {
     pub pattern: String,
     pub regex: bool,
     pub stub: bool,
+    pub body: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -188,10 +189,14 @@ fn strip_raw(s: &str) -> Option<String> {
     quote.find(&close).map(|i| quote[..i].to_string())
 }
 
-fn body_is_stub(lines: &[&str], start: usize) -> bool {
+pub fn step_def_body(lines: &[&str], start: usize) -> String {
     let mut chunk = String::new();
-    for line in lines.iter().skip(start).take(8) {
-        if attr_re().is_match(line) || py_attr_re().is_match(line) || js_attr_re().is_match(line) {
+    let mut depth = 0i32;
+    let mut seen_brace = false;
+    for line in lines.iter().skip(start).take(40) {
+        if !seen_brace
+            && (attr_re().is_match(line) || py_attr_re().is_match(line) || js_attr_re().is_match(line))
+        {
             break;
         }
         if line.trim().starts_with("fn main") {
@@ -199,10 +204,26 @@ fn body_is_stub(lines: &[&str], start: usize) -> bool {
         }
         chunk.push_str(line);
         chunk.push('\n');
-        if line.contains('}') && chunk.contains('{') {
+        for c in line.chars() {
+            if c == '{' {
+                depth += 1;
+                seen_brace = true;
+            } else if c == '}' {
+                depth -= 1;
+            }
+        }
+        if seen_brace && depth <= 0 {
+            break;
+        }
+        if !seen_brace && chunk.lines().count() > 8 {
             break;
         }
     }
+    chunk
+}
+
+fn body_is_stub(lines: &[&str], start: usize) -> bool {
+    let chunk = step_def_body(lines, start);
     let blob = chunk.to_ascii_lowercase();
     if blob.contains("todo!")
         || blob.contains("unimplemented!")
@@ -250,6 +271,7 @@ pub fn parse_step_defs(src: &str) -> Vec<StepDef> {
             pattern,
             regex,
             stub: body_is_stub(&lines, i + 1),
+            body: step_def_body(&lines, i + 1),
         });
     }
     out
@@ -417,6 +439,157 @@ pub fn pick_steps_journey(features: &[Feature], defs: &[StepDef], focus_journey:
         .filter(|j| j.bound < j.scenarios)
         .min_by_key(|j| (j.bound, j.scenarios))
         .map(|j| j.journey)
+}
+
+/// First unbound scenario in `journey`. The filler gets this one, not the whole epic.
+pub fn first_unbound<'a>(
+    features: &'a [Feature],
+    journey: &str,
+    defs: &[StepDef],
+) -> Option<(&'a Feature, &'a Scenario)> {
+    for f in features {
+        if journey_of(f) != journey {
+            continue;
+        }
+        for s in &f.scenarios {
+            if !scenario_is_bound(f, s, defs) {
+                return Some((f, s));
+            }
+        }
+    }
+    None
+}
+
+/// True when every parsed step body is still a stub (or there are none).
+pub fn steps_all_stubs(root: &Path) -> bool {
+    let defs = load_step_defs(root);
+    !defs.iter().any(|d| !d.stub)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FillTarget {
+    pub journey: String,
+    pub rid: String,
+    pub name: String,
+}
+
+fn fill_target_path(root: &Path) -> std::path::PathBuf {
+    root.join(".shalt/fill-target.json")
+}
+
+pub fn save_fill_target(root: &Path, t: &FillTarget) {
+    let path = fill_target_path(root);
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(raw) = serde_json::to_string_pretty(t) {
+        let _ = std::fs::write(path, raw);
+    }
+}
+
+pub fn load_fill_target(root: &Path) -> Option<FillTarget> {
+    std::fs::read_to_string(fill_target_path(root))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+}
+
+/// The one scenario this fill was tasked with is bound.
+/// Missing target file is unbound — the stage dir often has no `.shalt/`.
+pub fn fill_target_is_bound(root: &Path) -> bool {
+    let Some(t) = load_fill_target(root) else {
+        return false;
+    };
+    let Ok(features) = crate::spec::load_specs(&root.join("spec"), false) else {
+        return false;
+    };
+    let defs = load_step_defs(root);
+    for f in &features {
+        for s in &f.scenarios {
+            let rid_hit = !t.rid.is_empty() && s.rid.as_deref() == Some(t.rid.as_str());
+            let name_hit = s.name == t.name;
+            if rid_hit || name_hit {
+                return scenario_is_bound(f, s, &defs);
+            }
+        }
+    }
+    false
+}
+
+/// A dump with no write is not a finished stepwright turn.
+pub fn stepwright_turn_may_end(role: &str, target_bound: bool) -> bool {
+    role != "stepwright" || target_bound
+}
+
+pub fn fill_target_steps_rel(root: &Path) -> Option<String> {
+    let t = load_fill_target(root)?;
+    if t.journey.trim().is_empty() {
+        return None;
+    }
+    Some(format!("steps/{}.steps.js", t.journey))
+}
+
+/// Native Ollama ignores tool_choice. If the model dumps a steps file in
+/// the assistant message, treat it as write_file.
+pub fn extract_js_steps_source(text: &str) -> Option<String> {
+    let mut t = text.trim().to_string();
+    if let Some(start) = t.find("```") {
+        let rest = t[start + 3..].trim_start();
+        let rest = rest
+            .strip_prefix("javascript")
+            .or_else(|| rest.strip_prefix("js"))
+            .unwrap_or(rest);
+        if let Some(end) = rest.find("```") {
+            t = rest[..end].trim().to_string();
+        }
+    }
+    let has_step = t.contains("Given(") || t.contains("When(") || t.contains("Then(");
+    let has_fn = t.contains("function") || t.contains("=>");
+    if has_step && has_fn {
+        Some(t)
+    } else {
+        None
+    }
+}
+
+/// How many steps of the tasked scenario are still missing or stub.
+pub fn fill_target_stub_count(root: &Path) -> usize {
+    let Some(t) = load_fill_target(root) else {
+        let n = load_step_defs(root).iter().filter(|d| d.stub).count();
+        return n.max(1);
+    };
+    let Ok(features) = crate::spec::load_specs(&root.join("spec"), false) else {
+        return usize::MAX;
+    };
+    let defs = load_step_defs(root);
+    for f in &features {
+        for s in &f.scenarios {
+            let rid_hit = !t.rid.is_empty() && s.rid.as_deref() == Some(t.rid.as_str());
+            let name_hit = s.name == t.name;
+            if rid_hit || name_hit {
+                return scenario_steps(f, s)
+                    .iter()
+                    .filter(|st| {
+                        let m = matching_defs(&defs, st);
+                        m.len() != 1 || m[0].stub
+                    })
+                    .count();
+            }
+        }
+    }
+    usize::MAX
+}
+
+pub fn is_steps_fill_path(path: &str) -> bool {
+    let p = path.replace('\\', "/");
+    let p = p.trim_start_matches("./");
+    if p.contains("..") {
+        return false;
+    }
+    let name = p.rsplit('/').next().unwrap_or(p);
+    if name == "world.js" || !name.ends_with(".steps.js") {
+        return false;
+    }
+    p == name || (p.starts_with("steps/") && !p[6..].contains('/'))
 }
 
 pub fn bound_count(features: &[Feature], defs: &[StepDef], focus_journey: &str) -> usize {

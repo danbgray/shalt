@@ -32,10 +32,10 @@ pub fn author_prompt_with_spec(
 ) -> String {
     let mut s = if onboard {
         format!(
-            "This is an EXISTING codebase. Write feature files under spec/ that describe behaviour the code already implements. Do not invent features that are not in the code. Do not modify src/. Ask if the code is ambiguous.\nIf spec/ already has .feature files, keep them. Add or finish only what is missing.\n\nNOTE FROM THE HUMAN:\n{request}\n"
+            "This is an EXISTING codebase. Write spec/*.feature files (Feature:, Scenario:, Given/When/Then) that describe behaviour the code already implements. Markdown headings and bullets are refused. Do not invent features that are not in the code. Do not modify src/. Ask if the code is ambiguous.\nIf spec/ already has Feature/Scenario files, keep them. Add or finish only what is missing.\n\nNOTE FROM THE HUMAN:\n{request}\n"
         )
     } else {
-        format!("Translate this request into feature files under spec/.\nIf spec/ already has features, keep them and add only what's missing.\nDo not call list_files. Write each feature file at most once, then done().\n\nREQUEST:\n{request}\n")
+        format!("Translate this request into spec/*.feature files in this shape:\n@epic:<area>\nFeature: <name>\n  Scenario: <one behaviour>\n    Given ...\n    When ...\n    Then ...\n    #observe: <door the implementation cannot fake>\nMarkdown headings (# ) are refused. #observe: is required after every Then — lock the surface in the spec before Play, like a threshold. Changing Then or #observe: after Play is an amendment. Concrete names and amounts. If spec/ already has Feature/Scenario files, keep them and add only what's missing.\nDo not call list_files. Write each feature file at most once, then done().\n\nREQUEST:\n{request}\n")
     };
     let decided: Vec<_> = turns.iter().filter(|t| !t.answer.trim().is_empty()).collect();
     if !decided.is_empty() {
@@ -46,10 +46,14 @@ pub fn author_prompt_with_spec(
     }
     if spec_text.trim().is_empty() {
         s.push_str("\nNo spec files yet.\n");
+    } else if !crate::spec::looks_like_gherkin(spec_text) {
+        s.push_str("\nCURRENT SPEC is not valid (no Scenario: lines). Replace those files with Feature/Scenario/Given/When/Then. Markdown bullets are not a spec.\n");
+        s.push_str(spec_text.trim());
+        s.push_str("\n");
     } else {
         s.push_str("\nCURRENT SPEC:\n");
         s.push_str(spec_text.trim());
-        s.push_str("\n\nIf this already covers the request, call done() immediately. Otherwise write only the missing files.\n");
+        s.push_str("\n\nThis spec was seeded from the interview. Review it. Override any scenario that is wrong, incomplete, or missing an interview fact. Keep Feature/Scenario/When/Then — markdown headings are refused. If the seed already matches the request, call done().\n");
     }
     s
 }
@@ -247,7 +251,7 @@ fn designer_user_prompt_scoped(root: &Path, focus_rid: &str, focus_journey: &str
 
 pub fn execute_design(job_id: &str) -> Result<String, String> {
     let mut q = JobQueue::load();
-    let job = q
+    let mut job = q
         .jobs
         .iter()
         .find(|j| j.id == job_id)
@@ -262,77 +266,99 @@ pub fn execute_design(job_id: &str) -> Result<String, String> {
         .ok_or_else(|| format!("unknown project {}", job.project_id))?;
     let root = PathBuf::from(&project.path);
     let _ = job.draft.restore_to(&root);
-    let mut prompt = crate::journal::with_pending(
-        &root,
-        &designer_user_prompt_scoped(&root, &job.rid, &job.epic),
-    );
-    if !job.prompt.trim().is_empty() {
-        prompt.push_str("\nNOTE:\n");
-        prompt.push_str(job.prompt.trim());
-        prompt.push('\n');
-    }
-    let result = run_role_or_failover(&job, &root, "designer", &prompt, false);
-    let mut q = JobQueue::load();
-    match result {
-        Ok(res) => {
-            if q.keep_parked(
-                job_id,
-                "model returned after Pause — discarded. Play to continue.",
-            ) {
-                let _ = q.save();
-                return Err("stopped (Paused)".into());
-            }
-            let features = load_specs(&root.join("spec"), false).unwrap_or_default();
-            crate::mockups::refresh_thumbs(&root, &features);
-            let promoted = crate::scaffold::promote_prototype(&root).unwrap_or_default();
-            let summary = if promoted.is_empty() {
-                format!("wrote {}: {}", res.wrote.len(), res.wrote.join(", "))
-            } else {
-                format!(
-                    "wrote {}: {}; prototype is the product ({})",
-                    res.wrote.len(),
-                    res.wrote.join(", "),
-                    promoted.join(", ")
-                )
-            };
-            q.append(job_id, &summary);
-            q.set_status(job_id, JobStatus::Done);
-            let _ = q.save();
-            if let Some(j) = q.get(job_id).cloned() {
-                let _ = crate::journal::publish(&root, &j, &res.transcript);
-                let _ = crate::journal::note_design_up(&root);
-                crate::parallel::mark_finish(&j);
-            }
-            Ok(summary)
+    let mut last_transcript = String::new();
+    let mut tries = 0usize;
+    loop {
+        tries += 1;
+        if let Some(latest) = JobQueue::load().get(job_id).cloned() {
+            job = latest;
         }
-        Err(e) => {
-            let stopped = e.to_string();
-            let short = crate::jobs::human_error(&stopped);
-            if q.keep_parked(
-                job_id,
-                &format!("parked while waiting on the model ({short})"),
-            ) {
-                let _ = q.save();
-                return Err(stopped);
-            }
-            if stopped.contains("model switched") {
-                q.append(
+        let mut prompt = crate::journal::with_pending(
+            &root,
+            &designer_user_prompt_scoped(&root, &job.rid, &job.epic),
+        );
+        if !job.prompt.trim().is_empty() {
+            prompt.push_str("\nNOTE:\n");
+            prompt.push_str(job.prompt.trim());
+            prompt.push('\n');
+        }
+        let result = run_role_or_failover(&job, &root, "designer", &prompt, false);
+        let mut q = JobQueue::load();
+        match result {
+            Ok(res) => {
+                if q.keep_parked(
                     job_id,
-                    "old model call dropped — Play continues on the new one",
-                );
+                    "model returned after Pause — discarded. Play to continue.",
+                ) {
+                    let _ = q.save();
+                    return Err("stopped (Paused)".into());
+                }
+                last_transcript = res.transcript.clone();
+                let features = load_specs(&root.join("spec"), false).unwrap_or_default();
+                crate::mockups::refresh_thumbs(&root, &features);
+                if res.wrote.is_empty() && crate::mockups::design_needed(&root, &features) {
+                    if tries <= crate::alloc::WRITE_MODELS.len()
+                        && hop_write_lane(&mut job, "design dump — next writer draws")
+                    {
+                        continue;
+                    }
+                }
+                let promoted = crate::scaffold::promote_prototype(&root).unwrap_or_default();
+                let summary = if promoted.is_empty() {
+                    format!("wrote {}: {}", res.wrote.len(), res.wrote.join(", "))
+                } else {
+                    format!(
+                        "wrote {}: {}; prototype is the product ({})",
+                        res.wrote.len(),
+                        res.wrote.join(", "),
+                        promoted.join(", ")
+                    )
+                };
+                q.append(job_id, &summary);
+                q.set_status(job_id, JobStatus::Done);
+                let _ = q.save();
+                if let Some(j) = q.get(job_id).cloned() {
+                    let _ = crate::journal::publish(&root, &j, &last_transcript);
+                    let _ = crate::journal::note_design_up(&root);
+                    crate::parallel::mark_finish(&j);
+                }
+                return Ok(summary);
+            }
+            Err(e) => {
+                let stopped = e.to_string();
+                let short = crate::jobs::human_error(&stopped);
+                if q.keep_parked(
+                    job_id,
+                    &format!("parked while waiting on the model ({short})"),
+                ) {
+                    let _ = q.save();
+                    return Err(stopped);
+                }
+                if stopped.contains("model switched") {
+                    q.append(
+                        job_id,
+                        "old model call dropped — Play continues on the new one",
+                    );
+                    let _ = q.save();
+                    return Err(stopped);
+                }
+                if looks_like_local_stall(&stopped)
+                    && tries <= crate::alloc::WRITE_MODELS.len()
+                    && hop_write_lane(&mut job, "design stall — next writer draws")
+                {
+                    continue;
+                }
+                q.set_error(job_id, &short);
+                q.append(job_id, &format!("failed: {short}"));
+                let status = if stopped.contains("stopped") {
+                    JobStatus::Interrupted
+                } else {
+                    JobStatus::Failed
+                };
+                q.set_status(job_id, status);
                 let _ = q.save();
                 return Err(stopped);
             }
-            q.set_error(job_id, &short);
-            q.append(job_id, &format!("failed: {short}"));
-            let status = if stopped.contains("stopped") {
-                JobStatus::Interrupted
-            } else {
-                JobStatus::Failed
-            };
-            q.set_status(job_id, status);
-            let _ = q.save();
-            Err(stopped)
         }
     }
 }
@@ -677,6 +703,22 @@ pub fn backend_for_job(job: &Job) -> Result<OpenAICompatBackend, String> {
                 let _ = q.save();
                 return Ok(a);
             }
+            let root = crate::org::Org::load()
+                .get(&project_id)
+                .map(|p| std::path::PathBuf::from(&p.path))
+                .unwrap_or_default();
+            let n = crate::config::guess_tries_for(&root);
+            let tries = q.note_bad_guess(&jid_ask, question);
+            q.append(
+                &jid_ask,
+                &format!("yolo: guess refused ({tries}/{n}) — asking again"),
+            );
+            let _ = q.save();
+            if tries < n {
+                return Ok(format!(
+                    "ERROR: that guess does not answer the question. Call ask_human again with a concrete guess (a date, amount, or rule — not 'make an assumption'). Attempt {tries} of {n}."
+                ));
+            }
         }
         let mut q = JobQueue::load();
         q.ask(&jid_ask, question, guess);
@@ -777,6 +819,25 @@ pub fn looks_like_cloud_quota(err: &str) -> bool {
         || s.contains("permission-denied")
 }
 
+/// Missing cloud key — hop to local instead of idling Play on a failed Design/Build.
+pub fn looks_like_missing_key(err: &str) -> bool {
+    let s = err.to_lowercase();
+    // Humanized "No Anthropic API key" does not contain the substring "no api key".
+    (s.contains("api key") && (s.contains("no ") || s.contains("missing")))
+        || s.contains("no api key")
+}
+
+/// Local Ollama needs no key. Cloud backends need their key present (and Grok not quota-dead).
+pub fn backend_key_ready(backend: &str) -> bool {
+    match crate::tokens::normalize_backend(backend).as_str() {
+        "qwen" | "ollama" | "" => true,
+        "grok" => grok_is_usable(),
+        "claude" => crate::api::keys_status().anthropic.set,
+        "openai" | "codex" => crate::api::keys_status().openai.set,
+        other => OpenAICompatBackend::from_preset(other, None, None).is_ok(),
+    }
+}
+
 pub fn pick_local_model(installed: &[String]) -> String {
     if let Some((_, model)) = crate::alloc::pick_fast_model(installed) {
         return model;
@@ -863,7 +924,10 @@ pub fn run_role_or_failover(
     prompt: &str,
     hide_holdouts: bool,
 ) -> Result<RoleResult, RoleError> {
-    let note = crate::jobs::ask_mode_note(crate::org::Org::yolo_mode(&job.project_id));
+    let note = crate::jobs::ask_mode_note_for(
+        role,
+        crate::org::Org::yolo_mode(&job.project_id),
+    );
     let packed = crate::brief::uses_packed_brief(role);
     let prompt = if packed {
         if note.trim().is_empty() {
@@ -884,23 +948,37 @@ pub fn run_role_or_failover(
     } else {
         ""
     };
-    let mut backend = backend_for_job(job).map_err(RoleError::Other)?;
+    let mut live = job.clone();
+    let mut backend = match backend_for_job(&live) {
+        Ok(b) => b,
+        Err(e) if looks_like_missing_key(&e) => {
+            let Some((backend, model)) = local_failover_target(&live) else {
+                return Err(RoleError::Other(e));
+            };
+            live = match apply_agent_failover(&live.id, &backend, &model, &e) {
+                Ok(j) => j,
+                Err(stop) => return Err(RoleError::Other(stop)),
+            };
+            backend_for_job(&live).map_err(RoleError::Other)?
+        }
+        Err(e) => return Err(RoleError::Other(e)),
+    };
     match crate::roles::run_role_focused(root, role, &prompt, &mut backend, hide_holdouts, focus) {
         Ok(res) => Ok(res),
         Err(RoleError::Integrity(e)) => Err(RoleError::Integrity(e)),
         Err(e) => {
             let msg = e.to_string();
             let failover = if looks_like_local_stall(&msg) {
-                grok_failover_target(job)
-            } else if looks_like_cloud_quota(&msg) {
-                local_failover_target(job)
+                grok_failover_target(&live)
+            } else if looks_like_cloud_quota(&msg) || looks_like_missing_key(&msg) {
+                local_failover_target(&live)
             } else {
                 None
             };
             let Some((backend, model)) = failover else {
                 return Err(e);
             };
-            let job = match apply_agent_failover(&job.id, &backend, &model, &msg) {
+            let job = match apply_agent_failover(&live.id, &backend, &model, &msg) {
                 Ok(j) => j,
                 Err(stop) => return Err(RoleError::Other(stop)),
             };
@@ -910,9 +988,78 @@ pub fn run_role_or_failover(
     }
 }
 
+fn local_write_chain() -> Vec<String> {
+    let mut installed: Vec<String> = crate::api::list_models()
+        .into_iter()
+        .filter(|m| m.kind == "local" || m.backend == "qwen" || m.backend == "ollama")
+        .map(|m| m.id)
+        .collect();
+    if installed.is_empty() {
+        installed = crate::alloc::WRITE_MODELS
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+    }
+    installed
+}
+
+fn hop_write_lane(job: &mut Job, why: &str) -> bool {
+    let installed = local_write_chain();
+    let skip_flash = crate::api::heavy_review_loaded();
+    let Some((backend, model)) =
+        crate::alloc::pick_escalate_model_filtered(&installed, &job.model, skip_flash)
+    else {
+        return false;
+    };
+    let loaded = crate::api::ollama_loaded();
+    if !crate::alloc::hop_up_ok(&loaded, &job.model, &model, chrono::Utc::now()) {
+        return false;
+    }
+    match apply_agent_failover(&job.id, &backend, &model, why) {
+        Ok(j) => {
+            *job = j;
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+fn author_accepted_spec(transcript: &str) -> bool {
+    transcript.lines().any(|l| {
+        let t = l.trim();
+        t.starts_with("[done]") && !t.contains("refused")
+    })
+}
+
+/// Dump or a refused markdown write is not a review. Hop so 4B/8B can override.
+fn author_review_holds(transcript: &str, wrote: &[String]) -> bool {
+    if transcript.contains("spec format refused") {
+        return false;
+    }
+    author_accepted_spec(transcript) || !wrote.is_empty()
+}
+
+#[cfg(test)]
+mod author_review_tests {
+    use super::{author_accepted_spec, author_review_holds};
+
+    #[test]
+    fn dump_is_not_a_review() {
+        assert!(!author_review_holds("# Feature: essay\n", &[]));
+        assert!(author_accepted_spec("[done] seed matches the interview"));
+        assert!(author_review_holds("[done] seed matches the interview", &[]));
+        assert!(!author_accepted_spec("[done] refused — spec needs Feature/Scenario/When/Then"));
+        assert!(!author_review_holds(
+            "spec format refused — hop",
+            &["spec/a.feature".into()]
+        ));
+        assert!(author_review_holds("ok", &["spec/recipes.feature".into()]));
+    }
+}
+
 pub fn execute_author(job_id: &str) -> Result<String, String> {
     let mut q = JobQueue::load();
-    let job = q
+    let mut job = q
         .jobs
         .iter()
         .find(|j| j.id == job_id)
@@ -927,88 +1074,168 @@ pub fn execute_author(job_id: &str) -> Result<String, String> {
         .ok_or_else(|| format!("unknown project {}", job.project_id))?;
     let root = PathBuf::from(&project.path);
     let _ = job.draft.restore_to(&root);
-    let prompt = crate::journal::with_pending(
-        &root,
-        &author_prompt_with_spec(
-            &job.prompt,
-            &job.turns,
-            job.onboard,
-            &spec_snapshot(&root),
-        ),
-    );
-    let result = run_role_or_failover(&job, &root, "author", &prompt, false);
-    let mut q = JobQueue::load();
-    match result {
-        Ok(res) => {
-            if q.keep_parked(
-                job_id,
-                "model returned after Pause — discarded. Play to continue.",
-            ) {
-                let _ = q.save();
-                return Err("stopped (Paused)".into());
-            }
-            let _ = crate::spec::stamp_rids(&root.join("spec"));
-            if let Ok(features) = load_specs(&root.join("spec"), false) {
-                let mut led = Ledger::load(&root.join(".shalt/ledger.json")).unwrap_or_default();
-                led.sync_spec(&features);
-                let _ = led.save(&root.join(".shalt/ledger.json"));
-                let mut board = crate::board::Board::load(&root.join(".shalt/board.json"));
-                board.sync_new_rids(&features);
-                board.sync_epics(&features);
-                let qnow = crate::jobs::JobQueue::load();
-                crate::alloc::allocate_unassigned_now(
-                    &mut board,
-                    &led,
-                    &qnow.jobs,
-                    &job.project_id,
-                );
-                let _ = board.save(&root.join(".shalt/board.json"));
-            }
-            crate::talk::seed_plan(&root, &job.prompt);
-            crate::talk::fold_answers_into_plan(&root, &job.prompt, &job.turns);
-            let summary = format!("wrote {}: {}", res.wrote.len(), res.wrote.join(", "));
-            q.append(job_id, &summary);
-            q.set_status(job_id, JobStatus::Done);
-            let _ = q.save();
-            if let Some(j) = q.get(job_id).cloned() {
-                let _ = crate::journal::publish(&root, &j, &res.transcript);
-                if let Ok(features) = load_specs(&root.join("spec"), false) {
-                    let _ = crate::journal::note_spec_born(&root, &features);
-                }
-                crate::parallel::mark_finish(&j);
-            }
-            Ok(summary)
-        }
-        Err(e) => {
-            let stopped = e.to_string();
-            let short = crate::jobs::human_error(&stopped);
-            if q.keep_parked(
-                job_id,
-                &format!("parked while waiting on the model ({short})"),
-            ) {
-                let _ = q.save();
-                return Err(stopped);
-            }
-            if stopped.contains("model switched") {
+    let plan = crate::talk::load_plan(&root, &job.prompt);
+    let existing = load_specs(&root.join("spec"), false).unwrap_or_default();
+    if crate::spec::gherkin_scenario_count(&existing) == 0 {
+        match crate::spec::seed_spec_from_plan(&root, &plan) {
+            Ok(files) if !files.is_empty() => {
+                let mut q = JobQueue::load();
                 q.append(
                     job_id,
-                    "old model call dropped — Play continues on the new one",
+                    &format!("seeded spec from interview · {}", files.join(", ")),
                 );
+                let _ = q.save();
+            }
+            Err(e) => {
+                let mut q = JobQueue::load();
+                q.append(job_id, &format!("seed spec failed: {e}"));
+                let _ = q.save();
+            }
+            _ => {}
+        }
+    }
+    let mut last_wrote: Vec<String> = Vec::new();
+    let mut last_transcript = String::new();
+    let mut tries = 0usize;
+    loop {
+        tries += 1;
+        if let Some(latest) = JobQueue::load().get(job_id).cloned() {
+            job = latest;
+        }
+        let prompt = crate::journal::with_pending(
+            &root,
+            &author_prompt_with_spec(
+                &job.prompt,
+                &job.turns,
+                job.onboard,
+                &spec_snapshot(&root),
+            ),
+        );
+        let result = run_role_or_failover(&job, &root, "author", &prompt, false);
+        let mut q = JobQueue::load();
+        match result {
+            Ok(res) => {
+                if q.keep_parked(
+                    job_id,
+                    "model returned after Pause — discarded. Play to continue.",
+                ) {
+                    let _ = q.save();
+                    return Err("stopped (Paused)".into());
+                }
+                last_wrote = res.wrote.clone();
+                last_transcript = res.transcript.clone();
+                let features = load_specs(&root.join("spec"), false).unwrap_or_default();
+                let playable = crate::spec::gherkin_scenario_count(&features) > 0;
+                if playable && author_review_holds(&res.transcript, &res.wrote) {
+                    break;
+                }
+                let why = if res.transcript.contains("spec format refused") {
+                    "spec format refused — next writer reviews"
+                } else {
+                    "author dump — next writer reviews"
+                };
+                if tries <= crate::alloc::WRITE_MODELS.len() && hop_write_lane(&mut job, why) {
+                    continue;
+                }
+                if playable {
+                    q.append(
+                        job_id,
+                        "seed stands — last writer did not override",
+                    );
+                    let _ = q.save();
+                    break;
+                }
+                let summary = format!("wrote {}: {}", res.wrote.len(), res.wrote.join(", "));
+                q.append(job_id, &summary);
+                q.append(job_id, "spec has no Scenario: lines");
+                q.set_error(job_id, "spec has no Scenario: lines");
+                q.set_status(job_id, JobStatus::Failed);
+                let _ = q.save();
+                if let Some(j) = q.get(job_id).cloned() {
+                    crate::parallel::mark_finish(&j);
+                }
+                return Err("spec has no Scenario: lines".into());
+            }
+            Err(e) => {
+                let stopped = e.to_string();
+                let short = crate::jobs::human_error(&stopped);
+                if q.keep_parked(
+                    job_id,
+                    &format!("parked while waiting on the model ({short})"),
+                ) {
+                    let _ = q.save();
+                    return Err(stopped);
+                }
+                if stopped.contains("model switched") {
+                    q.append(
+                        job_id,
+                        "old model call dropped — Play continues on the new one",
+                    );
+                    let _ = q.save();
+                    return Err(stopped);
+                }
+                if looks_like_local_stall(&stopped)
+                    && tries <= crate::alloc::WRITE_MODELS.len()
+                    && hop_write_lane(&mut job, "author stall — next writer reviews")
+                {
+                    continue;
+                }
+                if crate::spec::spec_is_playable(&root)
+                    && tries <= crate::alloc::WRITE_MODELS.len()
+                    && hop_write_lane(&mut job, "author failed — next writer reviews")
+                {
+                    continue;
+                }
+                if crate::spec::spec_is_playable(&root) {
+                    q.append(
+                        job_id,
+                        "seed stands — last writer failed to override",
+                    );
+                    let _ = q.save();
+                    break;
+                }
+                q.set_error(job_id, &short);
+                q.append(job_id, &format!("failed: {short}"));
+                let status = if stopped.contains("stopped") {
+                    JobStatus::Interrupted
+                } else {
+                    JobStatus::Failed
+                };
+                q.set_status(job_id, status);
                 let _ = q.save();
                 return Err(stopped);
             }
-            q.set_error(job_id, &short);
-            q.append(job_id, &format!("failed: {short}"));
-            let status = if stopped.contains("stopped") {
-                JobStatus::Interrupted
-            } else {
-                JobStatus::Failed
-            };
-            q.set_status(job_id, status);
-            let _ = q.save();
-            Err(stopped)
         }
     }
+    let mut q = JobQueue::load();
+    let _ = crate::spec::stamp_rids(&root.join("spec"));
+    let features = load_specs(&root.join("spec"), false).unwrap_or_default();
+    let mut led = Ledger::load(&root.join(".shalt/ledger.json")).unwrap_or_default();
+    led.sync_spec(&features);
+    let _ = led.save(&root.join(".shalt/ledger.json"));
+    let mut board = crate::board::Board::load(&root.join(".shalt/board.json"));
+    board.sync_new_rids(&features);
+    board.sync_epics(&features);
+    let qnow = crate::jobs::JobQueue::load();
+    crate::alloc::allocate_unassigned_now(
+        &mut board,
+        &led,
+        &qnow.jobs,
+        &job.project_id,
+    );
+    let _ = board.save(&root.join(".shalt/board.json"));
+    crate::talk::seed_plan(&root, &job.prompt);
+    crate::talk::fold_answers_into_plan(&root, &job.prompt, &job.turns);
+    let summary = format!("wrote {}: {}", last_wrote.len(), last_wrote.join(", "));
+    q.append(job_id, &summary);
+    q.set_status(job_id, JobStatus::Done);
+    let _ = q.save();
+    if let Some(j) = q.get(job_id).cloned() {
+        let _ = crate::journal::publish(&root, &j, &last_transcript);
+        let _ = crate::journal::note_spec_born(&root, &features);
+        crate::parallel::mark_finish(&j);
+    }
+    Ok(summary)
 }
 
 pub const ASK_CHAT_SYSTEM: &str = "You help a human decide a concrete answer to a blocking question from an agent that is writing spec, tests, or code.\nChat until they agree. Be specific: method names, examples, yes/no, one decision.\nDo not emit ANSWER: until they agree or clearly ask you to decide.\nWhen you have a decision they can accept, end with exactly:\nANSWER: <one short paragraph the implementer or author can follow — not a chat reply>.";

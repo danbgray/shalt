@@ -7,6 +7,7 @@ use crate::backends::Backend;
 use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -21,7 +22,7 @@ const COMPACT_TOOL_AFTER: usize = 2_000;
 pub const ASSUME_REPLY: &str = "The human is not taking questions this turn. Make a reasonable assumption, write it into the scenario as a concrete example, and continue.";
 
 pub const ROLE_SYSTEM: &[(&str, &str)] = &[
-    ("author", "You are the SPEC AUTHOR in a BDD pipeline. You write feature files under spec/. The spec is living: rewrite scenarios when they are wrong, vague, or untestable. If src/ contains code, describe behaviour that is true of it. If a concrete example is missing, ask_human once. One behaviour per scenario, concrete values. Tag each Feature with @epic:<area>. Do not list_files — the current spec is in the user prompt. Write each feature file at most once, then call done(). Do not write blog files, tests, or src/. Only create files under spec/."),
+    ("author", "You are the SPEC AUTHOR. Write spec/*.feature files in this exact shape only:\n@epic:<area>\nFeature: <name>\n  Scenario: <one behaviour>\n    Given <concrete setup>\n    When <one action>\n    Then <observable result>\nMarkdown headings (#) and bullet lists are refused. Each Scenario needs When and Then with real names, amounts, URLs. One behaviour per Scenario. Tag every Feature with @epic:<area>. Ask only about product facts (who, amount, rule) with a concrete guess. Never ask for ship dates, ETAs, or implementation calendars. Do not list_files. Write each feature file at most once, then done(). Do not write tests or src/. Only spec/."),
     ("designer", "You are the DESIGNER in a shalt pipeline. Layout only: fill beat regions under mockups/, not full HTML documents, not product nav, not a stylesheet. The shalt sketch sheet is the look (ink on paper). If kit.json has no platform, ask_human once (Phone, Tablet, or Desktop) with a guess; yolo takes the guess. Color, style, fonts, and layout wait for a separate design interview after every screen is drawn. shalt injects primary nav and beat list from THIS spec. One HTML file per journey at mockups/journeys/<journey>/<journey>.html; beats are data-rid sections. Per journey write mockups/journeys/<journey>/storyboard.json {journey,kind,spec_hash,frames:[{rid,file,caption}]}. Never write mockups/storyboard.json or HTML at the mockups root. Copy names, prices, and URLs from the spec. Clickable; unproven paths are a red stub. spec_hash must match the prompt. kind=none when there is no UI. Do not restyle controls or set light text on buttons. tokens.sketch.css is :root vars only if missing. tokens.final.css is the interview polish, one file for every mockup. Do not rewrite drawn journeys. Do not write spec/, tests, contract/, src/, or .shalt/. Call done() as soon as every empty beat has HTML and a storyboard frame."),
     ("stepwright", "You are the STEPWRIGHT in a shalt BDD pipeline. You see the spec and NOTHING of the implementation -- that is deliberate. The spec can change; re-bind scenarios when it does. This workspace is a Rust crate. Write shalt's step harness in tests/shalt.rs (Cargo [[test]] name = shalt). cucumber-rs 0.23: #[given(expr = \"...\")] / #[when(expr = \"...\")] / #[then(expr = \"...\")] whenever the step captures {string} or {int}; a literal with no capture may use #[when(\"...\")]. Data tables take an extra `step: &cucumber::gherkin::Step` (never cucumber::Step — that alias is generic over World). World is #[derive(Debug, Default, World)] and holds only Default+Debug fields (primitives, or contract types that derive both). fn main must write cucumber JSON to env SHALT_REPORT (default .shalt/cucumber.json) with cucumber::writer::Json and .run(\"spec\") — not run_and_exit. Match examples/rust-billing/tests/cucumber.rs. Declare the public API in contract/interface.md and import only that surface. Do not write Python, pytest-bdd, or files under steps/. Never weaken an assertion to make it easier to satisfy; you are the oracle, not the builder. If a scenario cannot be tested as written, do not invent a vacuous test — skip it so the author can fix the spec. Only create files under tests/ and contract/."),
     ("implementer", "You are the IMPLEMENTER in a shalt BDD pipeline. You see the spec, the interface contract, mockups/ (sketched screens), and the failing test output -- you do NOT see the step definitions, and you cannot edit them. This workspace is a Rust crate. Write Rust under src/ that satisfies the specified behaviour against the contract. Fill the module the failing test needs. Do not rewrite every file. Write each file at most once this turn, then done(). Match mockups when the work is UI; the spec still wins if they disagree. Do not write Python. Do not special-case test inputs or hard-code expected outputs; implement the behaviour. If the spec is wrong, incomplete, or contradicts itself, call ask_human — do not invent the missing behaviour and do not weaken the contract. Only create files under src/."),
@@ -61,9 +62,13 @@ fn packed_system(role: &str, model: &str, stage: &Path) -> String {
     let stack = crate::config::Config::load(stage)
         .map(|c| c.stack)
         .unwrap_or_else(|_| "rust".into());
-    let tools = "\n\nYou work only through the provided tools. Paths are relative to your working root. Write complete files, not diffs. Call done() as soon as the work is covered.";
+    let tools = if role == "stepwright" {
+        "\n\nYou work only through the provided tools. Paths are relative to your working root. Fill pending bodies in the one file in the brief. Call done() when that scenario is bound."
+    } else {
+        "\n\nYou work only through the provided tools. Paths are relative to your working root. Write complete files, not diffs. Call done() as soon as the work is covered."
+    };
     if role == "stepwright" {
-        let sign = if crate::alloc::is_write_model(model) && !model.contains("8b") {
+        let sign = if crate::alloc::is_write_model(model) {
             ""
         } else {
             crate::journal::SIGN_OFF
@@ -335,6 +340,16 @@ pub fn dispatch(stage: &Path, name: &str, args: &Value) -> String {
     }
 }
 
+/// Bare assistant text with a `?` is not an interview. Fillers have no ask tool;
+/// a 3k dump of "Okay, let's tackle this…?" must not yolo-inject into the next hop.
+pub(crate) fn bare_text_is_ask(role: &str, text: &str) -> bool {
+    if matches!(role, "stepwright" | "auditor" | "code_auditor") {
+        return false;
+    }
+    let t = text.trim();
+    t.contains('?') && t.len() < 400
+}
+
 fn tools_json(role: &str) -> Value {
     let mut tools = vec![
         json!({"type":"function","function":{"name":"list_files","description":"List every file you can see, with its size in bytes.","parameters":{"type":"object","properties":{},"required":[]}}}),
@@ -488,6 +503,24 @@ impl OpenAICompatBackend {
     fn post(&mut self, payload: &Value) -> Result<Value, String> {
         // Native /api/chat honors options.num_ctx. OpenAI /v1/chat/completions
         // was loading 8B at 256k context and 0.6B at 40k.
+        if self.local() {
+            let loaded = ollama_loaded();
+            if crate::alloc::writer_needs_reload(&loaded, &self.model) {
+                return Err(
+                    "The model didn't respond in time. If this was a local model, Ollama may be busy."
+                        .into(),
+                );
+            }
+            let resident = loaded.iter().any(|m| m.name == self.model);
+            if !resident
+                && !crate::alloc::writer_load_ok(&loaded, &self.model, chrono::Utc::now())
+            {
+                return Err(
+                    "The model didn't respond in time. If this was a local model, Ollama may be busy."
+                        .into(),
+                );
+            }
+        }
         let url = if self.local() {
             "http://127.0.0.1:11434/api/chat".to_string()
         } else {
@@ -815,31 +848,269 @@ pub fn ollama_reachable() -> bool {
 
 /// Other-session 35B-128k. Writers may unload 27B; they must not drop this one.
 pub fn ollama_leave_loaded(name: &str) -> bool {
-    name.contains("35b-128k")
+    crate::alloc::leave_runner_loaded(name)
 }
 
-/// 27B/35B still in VRAM. Poking them with generate(keep_alive:0) keeps them resident.
-pub fn heavy_review_loaded() -> bool {
+static LAST_PS: Mutex<Vec<crate::alloc::LoadedRunner>> = Mutex::new(Vec::new());
+static PS_UNKNOWN: AtomicBool = AtomicBool::new(false);
+
+pub fn ollama_loaded() -> Vec<crate::alloc::LoadedRunner> {
     let Ok(r) = ureq::get("http://127.0.0.1:11434/api/ps")
-        .timeout(Duration::from_secs(2))
+        .timeout(Duration::from_secs(8))
         .call()
     else {
-        return false;
+        PS_UNKNOWN.store(true, Ordering::Relaxed);
+        return LAST_PS.lock().map(|g| g.clone()).unwrap_or_default();
     };
     let Ok(v) = r.into_json::<Value>() else {
-        return false;
+        PS_UNKNOWN.store(true, Ordering::Relaxed);
+        return LAST_PS.lock().map(|g| g.clone()).unwrap_or_default();
     };
+    PS_UNKNOWN.store(false, Ordering::Relaxed);
+    let rows = parse_ollama_ps(&v);
+    remember_loaded(&rows);
+    prune_stop_failed(&rows);
+    if let Ok(mut g) = LAST_PS.lock() {
+        *g = rows.clone();
+    }
+    rows
+}
+
+pub(crate) fn parse_ollama_ps(v: &Value) -> Vec<crate::alloc::LoadedRunner> {
     v.get("models")
         .and_then(|m| m.as_array())
         .map(|arr| {
-            arr.iter().any(|m| {
-                let name = m.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                let gb = m.get("size").and_then(|s| s.as_u64()).unwrap_or(0) as f64 / 1e9;
-                gb >= 8.0
-                    && (name.contains("27b") || name.contains("35b"))
-            })
+            arr.iter()
+                .filter_map(|m| {
+                    let name = m.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                    if name.is_empty() {
+                        return None;
+                    }
+                    Some(crate::alloc::LoadedRunner {
+                        name: name.to_string(),
+                        size: m.get("size").and_then(|s| s.as_u64()).unwrap_or(0),
+                        context_length: m
+                            .get("context_length")
+                            .and_then(|c| c.as_u64())
+                            .unwrap_or(0) as u32,
+                        expires_at: m
+                            .get("expires_at")
+                            .and_then(|e| e.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    })
+                })
+                .collect()
         })
-        .unwrap_or(false)
+        .unwrap_or_default()
+}
+
+/// 27B/35B still in VRAM. Poking them with generate(keep_alive:0) keeps them resident.
+/// Hung `api/ps` must not look empty and pin 0.6B.
+pub fn heavy_review_loaded() -> bool {
+    let loaded = ollama_loaded();
+    let failed: Vec<String> = load_stop_failed().into_iter().collect();
+    crate::alloc::skip_flash_writers(
+        &loaded,
+        &failed,
+        PS_UNKNOWN.load(Ordering::Relaxed),
+    )
+}
+
+/// Something other than `writer` is occupying the runner. A stall here is capacity.
+pub fn runner_contended(writer: &str) -> bool {
+    crate::alloc::stall_is_contention(&ollama_loaded(), writer)
+}
+
+/// Quality hops may load a hungrier writer. Protected 35B-128k does not block that.
+pub fn hop_is_safe(writer: &str) -> bool {
+    crate::alloc::pin_keep_alive_safe(&ollama_loaded(), writer)
+}
+
+fn loaded_ctx_path() -> PathBuf {
+    crate::org::Org::home_dir().join("loaded.json")
+}
+
+fn remember_loaded(rows: &[crate::alloc::LoadedRunner]) {
+    let mut map: std::collections::BTreeMap<String, u32> = fs::read_to_string(loaded_ctx_path())
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    let mut changed = false;
+    for m in rows {
+        if m.name.is_empty() || m.context_length == 0 {
+            continue;
+        }
+        if map.get(&m.name) != Some(&m.context_length) {
+            map.insert(m.name.clone(), m.context_length);
+            changed = true;
+        }
+    }
+    if !changed {
+        return;
+    }
+    if let Some(dir) = loaded_ctx_path().parent() {
+        let _ = fs::create_dir_all(dir);
+    }
+    if let Ok(raw) = serde_json::to_string_pretty(&map) {
+        let _ = fs::write(loaded_ctx_path(), raw);
+    }
+}
+
+pub fn last_measured_ctx(name: &str) -> u32 {
+    fs::read_to_string(loaded_ctx_path())
+        .ok()
+        .and_then(|s| serde_json::from_str::<std::collections::BTreeMap<String, u32>>(&s).ok())
+        .and_then(|m| m.get(name).copied())
+        .unwrap_or(0)
+}
+
+/// This review model is loaded past the cap, or last measured that way. Do not POST at it.
+pub fn review_unusable(name: &str) -> bool {
+    let current = ollama_loaded()
+        .iter()
+        .find(|m| m.name == name)
+        .map(|m| m.context_length)
+        .unwrap_or(0);
+    crate::alloc::review_ctx_unusable(name, current, last_measured_ctx(name))
+}
+
+fn stop_failed_path() -> PathBuf {
+    crate::org::Org::home_dir().join("stop-failed.json")
+}
+
+fn load_stop_failed() -> std::collections::BTreeSet<String> {
+    fs::read_to_string(stop_failed_path())
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+fn save_stop_failed(set: &std::collections::BTreeSet<String>) {
+    if let Some(dir) = stop_failed_path().parent() {
+        let _ = fs::create_dir_all(dir);
+    }
+    if let Ok(raw) = serde_json::to_string_pretty(set) {
+        let _ = fs::write(stop_failed_path(), raw);
+    }
+}
+
+fn mark_stop_failed(name: &str) {
+    let mut set = load_stop_failed();
+    if set.insert(name.to_string()) {
+        save_stop_failed(&set);
+    }
+}
+
+fn clear_stop_failed(name: &str) {
+    let mut set = load_stop_failed();
+    if set.remove(name) {
+        save_stop_failed(&set);
+    }
+}
+
+pub(crate) fn prune_stop_failed(loaded: &[crate::alloc::LoadedRunner]) {
+    let mut set = load_stop_failed();
+    let have: std::collections::BTreeSet<&str> = loaded.iter().map(|m| m.name.as_str()).collect();
+    let before = set.len();
+    set.retain(|n| have.contains(n.as_str()));
+    if set.len() != before {
+        save_stop_failed(&set);
+    }
+}
+
+/// `ollama stop` unloads a runner. generate(keep_alive:0) on 27B keeps it resident.
+/// Repeating stop on a still-alive occupant refreshes it — once is enough.
+/// An occupant whose keep-alive already lapsed is a zombie: stop again.
+pub fn stop_local_model(name: &str) {
+    if name.trim().is_empty() || ollama_leave_loaded(name) {
+        return;
+    }
+    if !ollama_model_loaded(name) {
+        clear_stop_failed(name);
+        return;
+    }
+    let expired = ollama_loaded()
+        .iter()
+        .find(|m| m.name == name)
+        .map(|m| crate::alloc::keep_alive_lapsed(&m.expires_at, chrono::Utc::now()))
+        .unwrap_or(false);
+    if !crate::alloc::should_issue_stop(true, load_stop_failed().contains(name), expired) {
+        return;
+    }
+    let _ = Command::new("ollama")
+        .arg("stop")
+        .arg(name)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    for _ in 0..20 {
+        if !ollama_model_loaded(name) {
+            clear_stop_failed(name);
+            return;
+        }
+        thread::sleep(Duration::from_millis(250));
+    }
+    mark_stop_failed(name);
+}
+
+/// Stop unprotected blockers so a writer can pin. Leaves 35B-128k alone.
+pub fn free_runner_for(writer: &str) {
+    let loaded = ollama_loaded();
+    for name in crate::alloc::occupants_to_stop(&loaded, writer) {
+        stop_local_model(&name);
+    }
+}
+
+/// Stop each blocker at most once, then GET-only until the writer can pin.
+/// A resident writer must not skip an already-expired occupant or a 256k self-load.
+pub fn wait_if_contended(writer: &str) {
+    let loaded = ollama_loaded();
+    if crate::alloc::writer_needs_reload(&loaded, writer) {
+        stop_local_model(writer);
+    }
+    let now = chrono::Utc::now();
+    for name in crate::alloc::zombies_to_stop(&loaded, writer, now) {
+        stop_local_model(&name);
+    }
+    for name in crate::alloc::oversized_blockers_to_stop(&loaded, writer) {
+        stop_local_model(&name);
+    }
+    let loaded = ollama_loaded();
+    let now = chrono::Utc::now();
+    if (crate::alloc::writer_resident(&loaded, writer)
+        && !crate::alloc::writer_needs_reload(&loaded, writer)
+        && crate::alloc::oversized_blockers_to_stop(&loaded, writer).is_empty())
+        || crate::alloc::writer_load_ok(&loaded, writer, now)
+    {
+        return;
+    }
+    free_runner_for(writer);
+    let loaded = ollama_loaded();
+    let failed = load_stop_failed();
+    let stubborn = crate::alloc::occupants_to_stop(&loaded, writer)
+        .iter()
+        .any(|n| failed.contains(n));
+    let lapsed = crate::alloc::expired_blockers_only(&loaded, writer, chrono::Utc::now());
+    let rounds = crate::alloc::contend_wait_rounds(stubborn, lapsed);
+    let slice = if stubborn && !lapsed {
+        Duration::from_secs(1)
+    } else {
+        Duration::from_millis(250)
+    };
+    for _ in 0..rounds {
+        let loaded = ollama_loaded();
+        let now = chrono::Utc::now();
+        if (crate::alloc::writer_resident(&loaded, writer)
+            && !crate::alloc::writer_needs_reload(&loaded, writer)
+            && crate::alloc::oversized_blockers_to_stop(&loaded, writer).is_empty())
+            || crate::alloc::writer_load_ok(&loaded, writer, now)
+        {
+            return;
+        }
+        thread::sleep(slice);
+    }
 }
 
 /// Drop loaded Ollama models except `keep` and protected 35B-128k.
@@ -863,6 +1134,7 @@ pub fn unload_local_except(keep: &str) {
         }
         // generate() on 27B to "unload" it actually keeps the runner alive.
         if name.contains("27b") || name.contains("35b") {
+            stop_local_model(name);
             continue;
         }
         let body = json!({ "model": name, "prompt": "", "keep_alive": 0 });
@@ -913,7 +1185,25 @@ pub fn keep_local_model(model: &str) {
     if model.trim().is_empty() {
         return;
     }
-    unload_local_except(model);
+    // A review model already at 256k stays there if we generate() at it.
+    if review_unusable(model) {
+        return;
+    }
+    let loaded = ollama_loaded();
+    if crate::alloc::writer_needs_reload(&loaded, model) {
+        stop_local_model(model);
+    }
+    let loaded = ollama_loaded();
+    // generate(keep_alive: 45m) on a writer that cannot load refreshes the occupant.
+    // Swapping 2B→4B while a leftover 27B sits is a hop, not a refresh of 27B.
+    let now = chrono::Utc::now();
+    if !crate::alloc::writer_load_ok(&loaded, model, now) {
+        return;
+    }
+    // Another stop on an expired leftover refreshes it. Load the writer beside it.
+    if !crate::alloc::expired_blockers_only(&loaded, model, now) {
+        unload_local_except(model);
+    }
     let body = json!({
         "model": model,
         "keep_alive": crate::alloc::LOCAL_KEEP_ALIVE,
@@ -925,6 +1215,7 @@ pub fn keep_local_model(model: &str) {
         .timeout(Duration::from_secs(wait))
         .set("Content-Type", "application/json")
         .send_json(body);
+    let _ = ollama_loaded();
 }
 
 fn ollama_eval_rate(data: &Value) -> Option<f64> {
@@ -1292,6 +1583,10 @@ mod packed_prompt_tests {
         let s = packed_system("stepwright", "qwen3.5:2b-mlx", t.path());
         assert!(!s.contains("function (not arrow)"));
         assert!(s.len() < 900, "{}", s.len());
+        let last = packed_system("stepwright", "qwen3:8b", t.path());
+        assert!(!last.contains("Write complete files"));
+        assert!(!last.contains("JOURNAL:"));
+        assert!(last.contains("one file"));
     }
 }
 
@@ -1434,6 +1729,63 @@ mod key_tests {
     }
 
     #[test]
+    fn steps_fill_path_is_the_oracle_file() {
+        assert!(crate::bindings::is_steps_fill_path("steps/recipes.steps.js"));
+        assert!(crate::bindings::is_steps_fill_path("recipes.steps.js"));
+        assert!(!crate::bindings::is_steps_fill_path("steps/world.js"));
+        assert!(!crate::bindings::is_steps_fill_path("steps/../.shalt/ledger.json"));
+        assert!(!crate::bindings::is_steps_fill_path("contract/interface.md"));
+    }
+
+    #[test]
+    fn harvests_dumped_step_source() {
+        let dump = "```javascript\nWhen('I create a recipe titled {string}', function (a0) {\n  this.lastRecipe = createRecipe(this.currentUser, a0);\n});\n```";
+        let src = crate::bindings::extract_js_steps_source(dump).expect("harvest");
+        assert!(src.contains("When("));
+        assert!(src.contains("createRecipe"));
+        assert!(crate::bindings::extract_js_steps_source("Okay, let's tackle this?").is_none());
+    }
+
+    #[test]
+    fn dump_is_not_a_finished_fill() {
+        assert!(!crate::bindings::stepwright_turn_may_end("stepwright", false));
+        assert!(crate::bindings::stepwright_turn_may_end("stepwright", true));
+        assert!(crate::bindings::stepwright_turn_may_end("author", false));
+    }
+
+    #[test]
+    fn filler_dump_is_not_an_interview() {
+        let dump = format!(
+            "Okay, let's tackle this problem. So, the user wants me to fill pending bodies? {}",
+            "x".repeat(800)
+        );
+        assert!(!bare_text_is_ask("stepwright", &dump));
+        assert!(!bare_text_is_ask("auditor", "PASS?"));
+        assert!(bare_text_is_ask("author", "Phone, Tablet, or Desktop?"));
+        assert!(!bare_text_is_ask("author", &dump));
+    }
+
+    #[test]
+    fn ps_row_carries_measured_size_and_ctx() {
+        let v = json!({
+            "models": [{
+                "name": "qwen3.8:27b-mlx",
+                "size": 31899864808u64,
+                "context_length": 262144,
+                "expires_at": "2026-09-23T09:42:12.211808-07:00"
+            }]
+        });
+        let loaded = parse_ollama_ps(&v);
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].name, "qwen3.8:27b-mlx");
+        assert_eq!(loaded[0].size, 31899864808);
+        assert_eq!(loaded[0].context_length, 262144);
+        assert_eq!(loaded[0].expires_at, "2026-09-23T09:42:12.211808-07:00");
+        assert!(crate::alloc::stall_is_contention(&loaded, "qwen3:8b"));
+        assert!(crate::alloc::ctx_oversized(&loaded[0].name, loaded[0].context_length));
+    }
+
+    #[test]
     fn author_is_capped_to_ten_model_rounds() {
         assert_eq!(max_steps_for("author"), 10);
         assert_eq!(max_steps_for("designer"), 18);
@@ -1471,6 +1823,17 @@ mod key_tests {
         let p = b.with_local_runtime(json!({"model": b.model, "messages": []}));
         assert_eq!(p["max_tokens"], 4096);
         assert_eq!(p["options"]["num_ctx"], 16384);
+        assert_eq!(p["think"], false);
+    }
+
+    #[test]
+    fn local_runtime_caps_last_writer() {
+        let b = OpenAICompatBackend::from_preset("qwen", Some("qwen3:8b"), None).unwrap();
+        assert_eq!(b.timeout_secs, 600);
+        let p = b.with_local_runtime(json!({"model": b.model, "messages": []}));
+        assert_eq!(p["max_tokens"], 4096);
+        assert_eq!(p["options"]["num_ctx"], 8192);
+        assert_eq!(p["options"]["num_predict"], 4096);
         assert_eq!(p["think"], false);
     }
 
@@ -1554,6 +1917,7 @@ impl Backend for OpenAICompatBackend {
         let mut transcript = Vec::new();
         self.emit(&format!("contacting {}…", self.model));
         let steps = self.max_steps.min(max_steps_for(role));
+        let mut dump_n = 0usize;
         for step in 0..steps {
             if let Some(gate) = &mut self.on_gate {
                 match gate() {
@@ -1589,6 +1953,8 @@ impl Backend for OpenAICompatBackend {
                 "tool_choice": "auto",
                 "temperature": 0.0,
             }));
+            // Native /api/chat ignores tool_choice (Ollama #11171). Stay auto;
+            // dumps that look like step source are harvested below.
             let data = self.post(&payload)?;
             let choices = data.get("choices").and_then(|c| c.as_array()).cloned().unwrap_or_default();
             if choices.is_empty() {
@@ -1611,7 +1977,7 @@ impl Backend for OpenAICompatBackend {
             let arr = calls.as_array().cloned().unwrap_or_default();
             if arr.is_empty() {
                 let text = msg.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
-                if text.contains('?') {
+                if bare_text_is_ask(role, &text) {
                     if let Some(cb) = &mut self.on_ask {
                         let a = cb(&text, "")?;
                         messages.push(json!({
@@ -1620,6 +1986,46 @@ impl Backend for OpenAICompatBackend {
                         }));
                         continue;
                     }
+                }
+                if !crate::bindings::stepwright_turn_may_end(
+                    role,
+                    crate::bindings::fill_target_is_bound(stage),
+                ) {
+                    if let Some(src) = crate::bindings::extract_js_steps_source(&text) {
+                        if let Some(rel) = crate::bindings::fill_target_steps_rel(stage) {
+                            let args = json!({"path": rel, "content": src});
+                            let result = dispatch(stage, "write_file", &args);
+                            self.emit(&format!("lane · write · harvested dump → {rel}"));
+                            if result.starts_with("wrote ") {
+                                if let Some(cb) = &mut self.on_write {
+                                    cb(&rel, &src);
+                                }
+                            }
+                            if crate::bindings::fill_target_is_bound(stage) {
+                                break;
+                            }
+                        }
+                    }
+                    dump_n += 1;
+                    if let Some(t) = crate::bindings::load_fill_target(stage) {
+                        let _ = crate::scaffold::fill_js_pending_oracles(stage, &t.journey);
+                        if crate::bindings::fill_target_is_bound(stage) {
+                            self.emit("lane · write · filled oracles after dump");
+                            break;
+                        }
+                    }
+                    // Last writer is 600s. A second dump round is the 10-minute stall loop.
+                    if dump_n >= 2 || crate::alloc::is_last_writer(&self.model) {
+                        self.emit("lane · write · dump — stop");
+                        break;
+                    }
+                    let _ = messages.pop();
+                    messages.push(json!({
+                        "role": "user",
+                        "content": "That was not a fill. write_file the pending bodies for this ONE scenario: import from src/, assert, do not return pending, then done()."
+                    }));
+                    self.emit("lane · write · dump — not a fill");
+                    continue;
                 }
                 if !text.trim().is_empty() {
                     self.emit(&text);
@@ -1637,6 +2043,16 @@ impl Backend for OpenAICompatBackend {
                 };
                 let result = if fn_obj.get("arguments").and_then(|a| a.as_str()).map(|s| serde_json::from_str::<Value>(s).is_err()).unwrap_or(false) {
                     "ERROR: arguments were not valid JSON".into()
+                } else if fname == "done"
+                    && role == "author"
+                    && !crate::spec::spec_is_playable(stage)
+                {
+                    "ERROR: spec is not playable. write_file spec/*.feature with Feature:, Scenario:, When, and Then. done() refused.".into()
+                } else if fname == "done"
+                    && role == "stepwright"
+                    && !crate::bindings::fill_target_is_bound(stage)
+                {
+                    "ERROR: this scenario is still unbound. Fill its pending bodies: import from src/, assert, do not return pending. done() refused.".into()
                 } else if fname == "ask_human" {
                     if matches!(role, "stepwright" | "auditor" | "code_auditor") {
                         "Do not ask. Fill pending bodies in the one file in the brief, then done().".into()
@@ -1644,6 +2060,8 @@ impl Backend for OpenAICompatBackend {
                     let q = args.get("question").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
                     if q.is_empty() {
                         "ERROR: question is required".into()
+                    } else if role == "author" && !crate::jobs::ask_is_product_behavior(&q) {
+                        "ERROR: do not ask about schedules or implementation dates. Write Feature/Scenario/When/Then for product behaviour. Ask only if a product fact is missing (who, amount, rule).".into()
                     } else {
                         let guess = args.get("guess").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
                         let replied = if let Some(cb) = &mut self.on_ask {
@@ -1657,6 +2075,57 @@ impl Backend for OpenAICompatBackend {
                         }
                     }
                     }
+                } else if fname == "write_file" && role == "author" {
+                    let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                    let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                    if let Some(err) = crate::spec::spec_write_error(path, content) {
+                        format!("ERROR: {err}")
+                    } else {
+                        let result = dispatch(stage, fname, &args);
+                        if result.starts_with("wrote ") {
+                            if let Some(cb) = &mut self.on_write {
+                                cb(path, content);
+                            }
+                        }
+                        result
+                    }
+                } else if fname == "write_file"
+                    && role == "stepwright"
+                    && !crate::bindings::is_steps_fill_path(
+                        args.get("path").and_then(|v| v.as_str()).unwrap_or(""),
+                    )
+                {
+                    "ERROR: write only the one steps file in the brief. Do not write world.js or contract/.".into()
+                } else if fname == "write_file"
+                    && role == "stepwright"
+                    && crate::bindings::is_steps_fill_path(
+                        args.get("path").and_then(|v| v.as_str()).unwrap_or(""),
+                    )
+                {
+                    let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                    let before = crate::bindings::fill_target_stub_count(stage);
+                    let dest = stage.join(path.trim_start_matches("./"));
+                    let prev = std::fs::read_to_string(&dest).unwrap_or_default();
+                    let result = dispatch(stage, fname, &args);
+                    if result.starts_with("wrote ") {
+                        let after = crate::bindings::fill_target_stub_count(stage);
+                        if after >= before {
+                            let dest = stage.join(path.trim_start_matches("./"));
+                            let _ = std::fs::write(&dest, prev);
+                            format!(
+                                "ERROR: write did not fill any pending body for this scenario ({after} still stub). Import from src/, assert, do not return pending."
+                            )
+                        } else {
+                            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                            let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                            if let Some(cb) = &mut self.on_write {
+                                cb(path, content);
+                            }
+                            result
+                        }
+                    } else {
+                        result
+                    }
                 } else {
                     let result = dispatch(stage, fname, &args);
                     if fname == "write_file" && result.starts_with("wrote ") {
@@ -1669,6 +2138,17 @@ impl Backend for OpenAICompatBackend {
                     result
                 };
                 let line = match fname {
+                    "ask_human" if matches!(role, "stepwright" | "auditor" | "code_auditor") => {
+                        "[ask_human] refused — fill, do not interview".into()
+                    }
+                    "ask_human"
+                        if role == "author"
+                            && !crate::jobs::ask_is_product_behavior(
+                                args.get("question").and_then(|v| v.as_str()).unwrap_or(""),
+                            ) =>
+                    {
+                        "[ask_human] refused — specify product behaviour, not a calendar".into()
+                    }
                     "ask_human" => "[ask_human] answered".into(),
                     "read_file" => format!(
                         "[read_file] {}",
@@ -1678,7 +2158,18 @@ impl Backend for OpenAICompatBackend {
                         let n = result.lines().filter(|l| !l.is_empty() && *l != "(no files yet)").count();
                         format!("[list_files] {n} file(s)")
                     }
+                    "write_file" if result.starts_with("ERROR:") => {
+                        result.chars().take(160).collect::<String>()
+                    }
                     "write_file" => result.chars().take(120).collect::<String>(),
+                    "done" if role == "author" && !crate::spec::spec_is_playable(stage) => {
+                        "[done] refused — spec needs Feature/Scenario/When/Then".into()
+                    }
+                    "done"
+                        if role == "stepwright" && !crate::bindings::fill_target_is_bound(stage) =>
+                    {
+                        "[done] refused — scenario still unbound".into()
+                    }
                     "done" => {
                         let summary = args.get("summary").and_then(|v| v.as_str()).unwrap_or("");
                         if !summary.is_empty() {
@@ -1696,7 +2187,23 @@ impl Backend for OpenAICompatBackend {
                     "content": result.chars().take(MAX_READ).collect::<String>(),
                 }));
                 if fname == "done" {
+                    let author_ok = role != "author" || crate::spec::spec_is_playable(stage);
+                    let steps_ok = crate::bindings::stepwright_turn_may_end(
+                        role,
+                        crate::bindings::fill_target_is_bound(stage),
+                    );
+                    if author_ok && steps_ok {
+                        finished = true;
+                    }
+                }
+                if role == "author"
+                    && fname == "write_file"
+                    && result.starts_with("ERROR:")
+                {
+                    self.emit("spec format refused — hop");
+                    transcript.push("spec format refused — hop".into());
                     finished = true;
+                    break;
                 }
             }
             compact_messages(&mut messages);

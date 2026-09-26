@@ -122,6 +122,15 @@ pub fn another_fill_fits(fills: usize, last_secs: f64, writer: &str, auditor: &s
     fills < fill_budget_for(writer, auditor, last_secs)
 }
 
+/// A cut-off decode is not a fill. Retry while elapsed fills still fit one auditor pass.
+pub fn truncated_retries(fills: usize, fill_secs: f64, auditor: Option<&SpeedSample>) -> bool {
+    let audit = auditor.map(|s| s.secs).unwrap_or(0.0);
+    if audit > 0.0 && fill_secs > 0.0 {
+        return (fills as f64) * fill_secs < audit;
+    }
+    fills < fill_budget(0.0, None, None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -168,5 +177,14 @@ mod tests {
         let a = s(22.0, 90.0);
         assert_eq!(fill_budget(0.0, Some(&w), Some(&a)), 64);
         assert_eq!(fill_budget(31.0, Some(&w), Some(&a)), 2);
+    }
+
+    #[test]
+    fn truncated_decode_retries_inside_one_auditor_pass() {
+        let a = s(22.0, 160.0);
+        assert!(truncated_retries(1, 130.0, Some(&a)));
+        assert!(!truncated_retries(2, 130.0, Some(&a)));
+        assert!(truncated_retries(1, 0.0, None));
+        assert!(!truncated_retries(2, 0.0, None));
     }
 }

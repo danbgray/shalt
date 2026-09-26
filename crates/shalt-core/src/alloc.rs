@@ -400,9 +400,16 @@ pub fn local_num_ctx(model: &str) -> u32 {
     }
 }
 
+/// Last name in `WRITE_MODELS`. No further quality hop; give it room to finish.
+pub fn is_last_writer(id: &str) -> bool {
+    WRITE_MODELS.last().copied() == Some(id)
+}
+
 pub fn local_max_tokens(model: &str) -> u32 {
     if is_flash_model(model) {
         1536
+    } else if is_last_writer(model) {
+        4096
     } else if is_fast_model(model) {
         3072
     } else {
@@ -413,11 +420,223 @@ pub fn local_max_tokens(model: &str) -> u32 {
 pub fn local_timeout_secs(model: &str) -> u64 {
     if is_flash_model(model) {
         90
+    } else if is_last_writer(model) {
+        600
     } else if is_fast_model(model) {
         240
     } else {
         900
     }
+}
+
+/// One row from Ollama `api/ps`. Size, context, and keep-alive are measured.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct LoadedRunner {
+    pub name: String,
+    pub size: u64,
+    pub context_length: u32,
+    pub expires_at: String,
+}
+
+/// Keep-alive clock has already passed. Still listed in `api/ps` = zombie.
+pub fn keep_alive_lapsed(expires_at: &str, now: chrono::DateTime<chrono::Utc>) -> bool {
+    let Ok(t) = chrono::DateTime::parse_from_rfc3339(expires_at) else {
+        return false;
+    };
+    t.with_timezone(&chrono::Utc) <= now
+}
+
+/// Loaded past twice shalt's cap for this name. Talking to it keeps the huge window.
+pub fn ctx_oversized(name: &str, context_length: u32) -> bool {
+    context_length > 0 && context_length > local_num_ctx(name).saturating_mul(2)
+}
+
+/// Current load or a previous measured load past the cap. Do not POST at it.
+pub fn review_ctx_unusable(name: &str, current_ctx: u32, last_ctx: u32) -> bool {
+    ctx_oversized(name, current_ctx) || ctx_oversized(name, last_ctx)
+}
+
+/// A stall is capacity, not quality, when something other than the writer
+/// occupies the runner (heavy VRAM or an oversized context). Hopping UP then
+/// makes the stall worse.
+pub fn stall_is_contention(loaded: &[LoadedRunner], writer: &str) -> bool {
+    loaded.iter().any(|m| occupant_blocks_writer(m, writer))
+}
+
+fn occupant_blocks_writer(m: &LoadedRunner, writer: &str) -> bool {
+    if m.name.is_empty() || m.name == writer {
+        return false;
+    }
+    let gb = m.size as f64 / 1e9;
+    gb >= 8.0 || ctx_oversized(&m.name, m.context_length)
+}
+
+/// Other-session 35B-128k. Do not unload it; writers may load beside it.
+pub fn leave_runner_loaded(name: &str) -> bool {
+    name.contains("35b-128k")
+}
+
+/// generate/chat keep_alive for `writer` would refresh a blocking occupant.
+pub fn pin_keep_alive_safe(loaded: &[LoadedRunner], writer: &str) -> bool {
+    occupants_to_stop(loaded, writer).is_empty()
+}
+
+/// Writer is already in `api/ps`. Chat it; do not wait on a leftover occupant.
+pub fn writer_resident(loaded: &[LoadedRunner], writer: &str) -> bool {
+    !writer.is_empty() && loaded.iter().any(|m| m.name == writer)
+}
+
+/// Pin still waits when an expired occupant (or oversized self-load) sits
+/// next to a resident writer. Skipping that wait starves the fill.
+pub fn pin_should_wait(
+    loaded: &[LoadedRunner],
+    writer: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> bool {
+    if writer_needs_reload(loaded, writer) {
+        return true;
+    }
+    if !stall_is_contention(loaded, writer) {
+        return false;
+    }
+    !writer_resident(loaded, writer)
+        || !zombies_to_stop(loaded, writer, now).is_empty()
+        || !oversized_blockers_to_stop(loaded, writer).is_empty()
+}
+
+/// Writer is loaded past twice its cap. Talking to it keeps the huge window — stop and reload.
+pub fn writer_needs_reload(loaded: &[LoadedRunner], writer: &str) -> bool {
+    !writer.is_empty()
+        && loaded
+            .iter()
+            .any(|m| m.name == writer && ctx_oversized(&m.name, m.context_length))
+}
+
+/// Unprotected blocker whose keep-alive already lapsed. Stop even if a writer is resident.
+pub fn zombies_to_stop(
+    loaded: &[LoadedRunner],
+    writer: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Vec<String> {
+    loaded
+        .iter()
+        .filter(|m| {
+            occupant_blocks_writer(m, writer)
+                && !leave_runner_loaded(&m.name)
+                && keep_alive_lapsed(&m.expires_at, now)
+        })
+        .map(|m| m.name.clone())
+        .collect()
+}
+
+/// Heavy leftover loaded past twice its cap. Stop even if keep-alive is live.
+/// Never 35B-128k.
+pub fn oversized_blockers_to_stop(loaded: &[LoadedRunner], writer: &str) -> Vec<String> {
+    occupants_to_stop(loaded, writer)
+        .into_iter()
+        .filter(|n| {
+            loaded
+                .iter()
+                .any(|m| m.name == *n && ctx_oversized(&m.name, m.context_length))
+        })
+        .collect()
+}
+
+/// Occupants that block `writer` and are safe to `ollama stop`. Never 35B-128k.
+pub fn occupants_to_stop(loaded: &[LoadedRunner], writer: &str) -> Vec<String> {
+    loaded
+        .iter()
+        .filter(|m| occupant_blocks_writer(m, writer) && !leave_runner_loaded(&m.name))
+        .map(|m| m.name.clone())
+        .collect()
+}
+
+/// Repeating `ollama stop` on an unload-resistant runner refreshes it.
+/// If keep-alive already lapsed and it is still listed, it is a zombie — stop again.
+pub fn should_issue_stop(
+    still_loaded: bool,
+    stop_already_failed: bool,
+    keep_alive_lapsed: bool,
+) -> bool {
+    if !still_loaded {
+        return false;
+    }
+    if keep_alive_lapsed {
+        return true;
+    }
+    !stop_already_failed
+}
+
+/// GET-only poll rounds after a stop. Unload-resistant occupants need the expire window, not another stop.
+/// An already-lapsed keep-alive will not GC because we wait — try the writer beside it.
+pub fn contend_wait_rounds(stop_failed_still_loaded: bool, keep_alive_lapsed: bool) -> u32 {
+    if keep_alive_lapsed {
+        8
+    } else if stop_failed_still_loaded {
+        360
+    } else {
+        40
+    }
+}
+
+/// Remaining blockers have already lapsed. Loading a writer beside them is better than waiting.
+pub fn expired_blockers_only(
+    loaded: &[LoadedRunner],
+    writer: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> bool {
+    let stop = occupants_to_stop(loaded, writer);
+    !stop.is_empty()
+        && stop.iter().all(|n| {
+            loaded
+                .iter()
+                .any(|m| m.name == *n && keep_alive_lapsed(&m.expires_at, now))
+        })
+}
+
+/// Flash writers only stall next to a 27B/35B. Skip them when ps is unknown or leftover.
+pub fn skip_flash_writers(
+    loaded: &[LoadedRunner],
+    stop_failed: &[String],
+    ps_unknown: bool,
+) -> bool {
+    if ps_unknown {
+        return true;
+    }
+    loaded.iter().any(|m| {
+        let gb = m.size as f64 / 1e9;
+        gb >= 8.0 && (m.name.contains("27b") || m.name.contains("35b"))
+    }) || stop_failed.iter().any(|n| {
+        n.contains("27b") || (n.contains("35b") && !leave_runner_loaded(n))
+    })
+}
+
+/// Chat/load this writer: pin is safe, a write-pool model is already in, or leftovers are expired.
+pub fn writer_load_ok(
+    loaded: &[LoadedRunner],
+    writer: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> bool {
+    pin_keep_alive_safe(loaded, writer)
+        || writer_swap_ok(loaded, writer)
+        || expired_blockers_only(loaded, writer, now)
+}
+
+/// A leftover occupant must not kill the write chain. Hop 2B→4B→8B beside it.
+pub fn hop_up_ok(
+    loaded: &[LoadedRunner],
+    current: &str,
+    next: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> bool {
+    writer_load_ok(loaded, next, now)
+        || writer_resident(loaded, current)
+        || !occupants_to_stop(loaded, next).is_empty()
+}
+
+/// A write-pool model is already in. Swap to `next` without a keep_alive on the occupant.
+pub fn writer_swap_ok(loaded: &[LoadedRunner], next: &str) -> bool {
+    is_write_model(next) && loaded.iter().any(|m| is_write_model(&m.name))
 }
 
 /// Tests and code stay on the fast local model. Author/designer/auditors review.
@@ -543,6 +762,12 @@ mod lane_tests {
         assert_eq!(local_num_ctx("qwen3.8:27b-mlx"), 16384);
         assert_eq!(local_max_tokens("qwen3.5:2b-mlx"), 3072);
         assert_eq!(local_timeout_secs("qwen3.5:2b-mlx"), 240);
+        assert_eq!(local_max_tokens("qwen3:4b"), 3072);
+        assert_eq!(local_timeout_secs("qwen3:4b"), 240);
+        assert!(is_last_writer("qwen3:8b"));
+        assert!(!is_last_writer("qwen3:4b"));
+        assert_eq!(local_max_tokens("qwen3:8b"), 4096);
+        assert_eq!(local_timeout_secs("qwen3:8b"), 600);
         assert_eq!(local_timeout_secs("qwen3.8:27b-mlx"), 900);
     }
 
@@ -599,5 +824,147 @@ mod lane_tests {
             "qwen3.8:27b-mlx"
         );
         assert!(pick_audit_model(&["qwen3.5:2b-mlx".into()]).is_none());
+    }
+
+    #[test]
+    fn a_heavy_or_oversized_occupant_is_contention_not_a_quality_hop() {
+        let zombie = LoadedRunner {
+            name: "qwen3.8:27b-mlx".into(),
+            size: 31_899_864_808,
+            context_length: 262_144,
+            expires_at: "2026-09-23T09:42:12.211808-07:00".into(),
+        };
+        let writer = LoadedRunner {
+            name: "qwen3:4b".into(),
+            size: 2_000_000_000,
+            context_length: 8192,
+            ..Default::default()
+        };
+        let flash = LoadedRunner {
+            name: "qwen3:1.7b".into(),
+            size: 1_200_000_000,
+            context_length: 4096,
+            ..Default::default()
+        };
+        let protected = LoadedRunner {
+            name: "qwen3.5:35b-128k".into(),
+            size: 20_000_000_000,
+            context_length: 131_072,
+            ..Default::default()
+        };
+        assert!(stall_is_contention(&[zombie.clone()], "qwen3:4b"));
+        assert!(stall_is_contention(&[zombie.clone(), writer.clone()], "qwen3:4b"));
+        assert!(!stall_is_contention(&[writer.clone()], "qwen3:4b"));
+        assert!(!stall_is_contention(&[flash.clone(), writer.clone()], "qwen3:4b"));
+        assert!(stall_is_contention(&[protected.clone()], "qwen3.5:2b-mlx"));
+        assert!(ctx_oversized("qwen3.8:27b-mlx", 262_144));
+        assert!(!ctx_oversized("qwen3.8:27b-mlx", 16_384));
+        assert!(!ctx_oversized("qwen3:4b", 8192));
+        assert!(review_ctx_unusable("qwen3.8:27b-mlx", 0, 262_144));
+        assert!(review_ctx_unusable("qwen3.8:27b-mlx", 262_144, 0));
+        assert!(!review_ctx_unusable("qwen3.8:27b-mlx", 0, 0));
+        assert!(!review_ctx_unusable("qwen3.8:27b-mlx", 16_384, 16_384));
+        assert!(!pin_keep_alive_safe(&[zombie.clone()], "qwen3.5:2b-mlx"));
+        assert!(!pin_keep_alive_safe(&[zombie.clone(), writer.clone()], "qwen3:4b"));
+        assert!(pin_keep_alive_safe(&[writer.clone()], "qwen3:4b"));
+        assert!(pin_keep_alive_safe(&[protected.clone()], "qwen3.5:2b-mlx"));
+        assert!(
+            pin_keep_alive_safe(&[protected.clone(), writer.clone()], "qwen3:4b"),
+            "35B-128k must not block a quality hop to the next writer"
+        );
+        assert!(leave_runner_loaded("qwen3.5:35b-128k"));
+        assert!(!leave_runner_loaded("qwen3.8:27b-mlx"));
+        assert_eq!(
+            occupants_to_stop(&[zombie.clone()], "qwen3.5:2b-mlx"),
+            vec!["qwen3.8:27b-mlx".to_string()]
+        );
+        assert!(occupants_to_stop(&[protected.clone()], "qwen3.5:2b-mlx").is_empty());
+        assert!(occupants_to_stop(&[writer.clone()], "qwen3:4b").is_empty());
+        assert!(should_issue_stop(true, false, false));
+        assert!(!should_issue_stop(true, true, false));
+        assert!(!should_issue_stop(false, true, false));
+        assert!(
+            should_issue_stop(true, true, true),
+            "expired occupant is a zombie — stop again"
+        );
+        assert!(!should_issue_stop(false, true, true));
+        let now = chrono::DateTime::parse_from_rfc3339("2026-09-23T16:46:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        assert!(keep_alive_lapsed(&zombie.expires_at, now));
+        assert!(!keep_alive_lapsed("", now));
+        assert!(!keep_alive_lapsed("2026-09-23T17:30:00Z", now));
+        assert!(contend_wait_rounds(true, false) > contend_wait_rounds(false, false));
+        assert!(contend_wait_rounds(true, true) < contend_wait_rounds(true, false));
+        assert!(expired_blockers_only(&[zombie.clone()], "qwen3.5:2b-mlx", now));
+        assert!(!expired_blockers_only(&[writer.clone()], "qwen3:4b", now));
+        assert!(writer_load_ok(&[zombie.clone()], "qwen3.5:2b-mlx", now));
+        assert!(writer_load_ok(&[writer.clone()], "qwen3:4b", now));
+        assert!(
+            hop_up_ok(&[zombie.clone()], "qwen3.5:2b-mlx", "qwen3:4b", now),
+            "2B stall with leftover 27B must hop to 4B, not die"
+        );
+        assert!(hop_up_ok(&[writer.clone()], "qwen3:4b", "qwen3:8b", now));
+        assert!(skip_flash_writers(&[zombie.clone()], &[], false));
+        assert!(skip_flash_writers(
+            &[],
+            &["qwen3.8:27b-mlx".into()],
+            false
+        ));
+        assert!(
+            skip_flash_writers(&[], &[], true),
+            "hung api/ps must not pin 0.6B"
+        );
+        assert!(!skip_flash_writers(&[writer.clone()], &[], false));
+        assert!(writer_swap_ok(&[zombie.clone(), writer.clone()], "qwen3:8b"));
+        assert!(
+            writer_swap_ok(&[zombie.clone(), writer.clone()], "qwen3:8b"),
+            "2B resident → hop to 8B even if 4B never loaded"
+        );
+        assert!(!writer_swap_ok(&[zombie.clone()], "qwen3:4b"));
+        assert!(writer_resident(&[zombie.clone(), writer.clone()], "qwen3:4b"));
+        assert!(!writer_resident(&[zombie.clone()], "qwen3:4b"));
+        let writer_8 = LoadedRunner {
+            name: "qwen3:8b".into(),
+            size: 3_860_000_000,
+            context_length: 8192,
+            expires_at: "2026-09-23T18:00:00Z".into(),
+        };
+        assert!(
+            pin_should_wait(&[zombie.clone(), writer_8.clone()], "qwen3:8b", now),
+            "resident 8B next to expired 27B must still stop the zombie"
+        );
+        assert!(!pin_should_wait(&[writer_8.clone()], "qwen3:8b", now));
+        assert!(pin_should_wait(&[zombie.clone()], "qwen3:8b", now));
+        assert_eq!(
+            zombies_to_stop(&[zombie.clone()], "qwen3.5:2b-mlx", now),
+            vec!["qwen3.8:27b-mlx".to_string()]
+        );
+        assert!(zombies_to_stop(&[protected.clone()], "qwen3.5:2b-mlx", now).is_empty());
+        let live_27 = LoadedRunner {
+            name: "qwen3.8:27b-mlx".into(),
+            size: 31_899_864_808,
+            context_length: 262_144,
+            expires_at: "2026-09-23T18:00:00Z".into(),
+        };
+        assert!(zombies_to_stop(&[live_27.clone()], "qwen3.5:2b-mlx", now).is_empty());
+        assert_eq!(
+            oversized_blockers_to_stop(&[live_27.clone(), writer_8.clone()], "qwen3:8b"),
+            vec!["qwen3.8:27b-mlx".to_string()]
+        );
+        assert!(
+            pin_should_wait(&[live_27.clone(), writer_8.clone()], "qwen3:8b", now),
+            "resident 8B next to a 256k 27B must stop the leftover, not starve"
+        );
+        assert!(oversized_blockers_to_stop(&[protected.clone()], "qwen3:8b").is_empty());
+        let fat_writer = LoadedRunner {
+            name: "qwen3.5:2b-mlx".into(),
+            size: 3_400_000_000,
+            context_length: 262_144,
+            ..Default::default()
+        };
+        assert!(writer_needs_reload(&[fat_writer.clone()], "qwen3.5:2b-mlx"));
+        assert!(!writer_needs_reload(&[writer.clone()], "qwen3:4b"));
+        assert!(!writer_needs_reload(&[zombie.clone()], "qwen3:4b"));
     }
 }

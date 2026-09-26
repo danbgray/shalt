@@ -197,7 +197,7 @@ pub fn progress(line: &str) -> String {
     if t.starts_with("[done]") {
         return mute(line);
     }
-    if t.starts_with("waiting on ") {
+    if t.starts_with("waiting on ") || t.starts_with("still waiting") || t.starts_with("thinking ·") {
         return mute(line);
     }
     if t.starts_with("step ") || t.starts_with("contacting ") || t.starts_with("still generating") || t.starts_with("tokens ") || t.starts_with("HTTP ") {
