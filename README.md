@@ -2,7 +2,7 @@
 
 English in. Spec, tests, and code out. **Green** means a bound test passed against the current wording of a scenario — not that an agent agreed with itself.
 
-MIT. [github.com/danbgray/shalt](https://github.com/danbgray/shalt)
+[MIT](LICENSE). [github.com/danbgray/shalt](https://github.com/danbgray/shalt)
 
 `shalt` is a Rust CLI. `shalt ui` is the same engine on `127.0.0.1` (default port 7700). Writers: Grok (`XAI_API_KEY`) or local Qwen via Ollama.
 
@@ -149,4 +149,4 @@ docs/
 
 ## License
 
-[MIT](LICENSE). Copyright Daniel Gray.
+[MIT](LICENSE). Copyright 2026 Daniel Gray and contributors. The Feature/Scenario syntax is Gherkin; the runners are cucumber-family. Those are other people's work. This repo is the harness around them.

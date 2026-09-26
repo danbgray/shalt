@@ -1,6 +1,6 @@
 # Contributing
 
-This project is licensed under the [MIT License](LICENSE). Copyright Daniel Gray.
+This project is licensed under the [MIT License](LICENSE).
 
 **Sign off every commit** under the [Developer Certificate of Origin](https://developercertificate.org/) (DCO) v1.1:
 
