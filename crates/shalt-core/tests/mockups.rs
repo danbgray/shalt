@@ -322,7 +322,10 @@ fn stale_hash_is_a_badge_not_a_verify_failure() {
     let (features, led) = load(t.path());
     let wall = films(t.path(), &features, &led);
     assert!(wall[0].stale);
-    assert!(design_needed(t.path(), &features));
+    assert!(
+        !design_needed(t.path(), &features),
+        "stale hash is a badge; frames on disk must not loop Design"
+    );
     assert!(verify_mockups(t.path(), &features).is_empty());
 }
 

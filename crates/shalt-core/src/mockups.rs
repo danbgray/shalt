@@ -272,12 +272,14 @@ pub fn design_needed(root: &Path, features: &[Feature]) -> bool {
 }
 
 fn film_needs_drawing(root: &Path, film: &Film) -> bool {
-    if load_json(root, &film.journey).is_none() || film.stale {
-        return true;
-    }
     if film.kind == "none" {
         return false;
     }
+    if load_json(root, &film.journey).is_none() {
+        return true;
+    }
+    // Wrong spec_hash used to keep Design looping the same HTML forever.
+    // Stale sketches still show in the desk; Play moves on once frames exist.
     film.frames.iter().any(|fr| !frame_is_drawn(root, fr))
 }
 
