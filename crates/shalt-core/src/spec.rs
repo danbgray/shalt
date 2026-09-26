@@ -588,6 +588,38 @@ Feature: Patron subscriptions
 "#,
             |p| p.contains("patron") || p.contains("$5") || p.contains("substack"),
         ),
+        (
+            "todo.feature",
+            r#"@epic:tasks
+Feature: Todo list
+  Scenario: Add a titled task
+    Given the list is empty
+    When I add a task titled "Buy milk"
+    Then the list shows "Buy milk" as active
+    #observe: the active list contains Buy milk
+  Scenario: Mark a task done
+    Given a task "Buy milk" is active
+    When I mark "Buy milk" done
+    Then "Buy milk" is completed
+    #observe: Buy milk is in the completed list and not in the active list
+  Scenario: Filter active tasks
+    Given a task "Buy milk" is completed
+    And a task "Call Sam" is active
+    When I filter to active
+    Then the visible list is only "Call Sam"
+    #observe: the visible list is only Call Sam
+  Scenario: Clear completed tasks
+    Given a task "Buy milk" is completed
+    And a task "Call Sam" is active
+    When I clear completed
+    Then the list is only "Call Sam"
+    #observe: completed is empty and Call Sam remains
+"#,
+            |p| {
+                p.contains("todo")
+                    || (p.contains("task") && (p.contains("done") || p.contains("list")))
+            },
+        ),
     ]
 }
 
@@ -628,6 +660,19 @@ mod spec_seed_tests {
         assert!(wrote.iter().any(|f| f.ends_with("patrons.feature")), "{wrote:?}");
         assert!(spec_is_playable(t.path()));
         assert_eq!(seed_spec_from_plan(t.path(), plan).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn seed_from_todo_interview() {
+        let t = tempfile::TempDir::new().unwrap();
+        let wrote = seed_spec_from_plan(
+            t.path(),
+            "A todo list. Add a task with a title. Mark it done. Filter active vs completed.",
+        )
+        .unwrap();
+        assert!(wrote.iter().any(|f| f.ends_with("todo.feature")), "{wrote:?}");
+        assert!(spec_is_playable(t.path()));
+        assert!(!wrote.iter().any(|f| f.contains("recipes.feature")));
     }
 
     #[test]

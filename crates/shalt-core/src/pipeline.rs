@@ -325,6 +325,13 @@ pub fn continue_project(project_id: &str) -> Result<Option<Job>, String> {
     if q.authoring_open(project_id) {
         return Ok(None);
     }
+    {
+        let existing = load_specs(&root.join("spec"), false).unwrap_or_default();
+        if crate::spec::gherkin_scenario_count(&existing) == 0 {
+            let plan = crate::talk::load_plan(&root, "");
+            let _ = crate::spec::seed_spec_from_plan(&root, &plan);
+        }
+    }
     if !root.join("spec").exists() && next_stage(&root) != Stage::Author {
         return Ok(None);
     }
