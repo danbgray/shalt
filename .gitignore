@@ -12,9 +12,22 @@ dist/
 crates/shalt-app/binaries/shalt-*
 .pytest_cache/
 
+# Live shalt state and cloud keys live in $SHALT_HOME (~/.shalt), never the repo.
 .shalt/
+**/.shalt/config.toml
+**/keys.json
+**/credentials.toml
+*.pem
+*.p12
+id_rsa
+id_rsa.pub
+
 web/node_modules/
 web/.next/
+.env
+.env.*
+!.env.example
+!**/.env.example
 web/.env.local
 .vercel
 web/.vercel
