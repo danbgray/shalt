@@ -138,6 +138,30 @@ shalt ui / shalt org / shalt board / shalt job
 
 See [limitations.md](docs/limitations.md). Short version: Feature/Scenario is a poor language for latency, cost, security, and how a UI feels. Holdouts and mutation **sample**. A Then that never went red is not evidence. Nobody reading the spec makes the human gate decorative.
 
+## Example: recipe share
+
+Play snapshot in [`examples/recipe-share`](examples/recipe-share). Spec with `#observe:`, cucumber-js steps, in-memory store, and the HTML wireframes design actually drew.
+
+Sketch of writing a recipe (`mockups/archive-sketches/journeys/recipes/recipes.html`):
+
+![Create a recipe wireframe](docs/images/wire-recipes-sketch.png)
+
+Ingredient packets / Amazon Fresh (`mockups/journeys/ingredients/ingredients.html`):
+
+![Ingredient packets wireframe](docs/images/wire-ingredients.png)
+
+Patronage (`mockups/archive-sketches/journeys/patrons/patrons.html`):
+
+![Patrons wireframe](docs/images/wire-patrons.png)
+
+Sharing and video sketches:
+
+![Public share wireframe](docs/images/wire-sharing.png)
+
+![Video timestamps wireframe](docs/images/wire-video.png)
+
+Treat this as what Play produced, not a gold oracle. Then bodies may still act.
+
 ## Layout
 
 ```
