@@ -1,9 +1,6 @@
 # Shalt.app
 
-A friend-share wrapper: the same `shalt ui` desk in a native window.
-
-This is **not** the inner-loop product. Ikonic loads shalt as a submodule
-(`ikonic/` at the repo root). `shalt ui` is the engine both surfaces talk to.
+A native window around `shalt ui`. Same engine as the CLI. Not a second product.
 
 ```
 ../../scripts/macos-install.sh

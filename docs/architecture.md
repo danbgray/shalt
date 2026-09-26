@@ -13,7 +13,7 @@ Three distinct failure modes, which need three distinct defences:
 |---|---|---|
 | **tampering** | the implementer edits or weakens the tests | zones + write guard ([isolation.md](isolation.md)) |
 | **overfitting** | the implementer special-cases the examples it was shown | holdout scenarios ([hierarchy.md](hierarchy.md)) |
-| **weak oracle** | the stepwright writes assertions that do not check anything | mutation testing ([mutation.md](mutation.md)) |
+| **weak oracle** | Then title is fine; the body does the When, or never went red | `#observe:` lock, Then-body lint, mutation ([mutation.md](mutation.md)) |
 
 A fourth failure is not an agent's fault at all but is just as damaging: **drift**, where the
 spec changes and the suite keeps passing because nobody re-checked. That one is handled by
@@ -111,73 +111,21 @@ failing test output — but never the step definitions themselves. It therefore 
 the *behaviour* rather than the *assertions*. The `contract/` zone exists precisely so that
 withholding `steps/` does not also withhold the API surface the implementer legitimately needs.
 
-## Module map
+## Crates
 
-3,335 lines across 15 modules. Dependencies flow strictly downward — no cycles except the
-deliberate lazy import between `backends` and `api_backend`.
+Rust. `shalt-core` is the engine. `shalt` is the CLI and the desk HTML. `shalt-app` is an optional macOS window around the same desk.
 
-```mermaid
-graph TD
-  cli["cli.py — 557"]
-  viz["viz.py — 552"]
-  mutate["mutate.py — 372"]
-  spec["spec.py — 330"]
-  api["api_backend.py — 265"]
-  ledger["ledger.py — 238"]
-  integrity["integrity.py — 202"]
-  config["config.py — 162"]
-  reports["reports.py — 146"]
-  backends["backends.py — 118"]
-  roles["roles.py — 117"]
-  plugin["pytest_plugin.py — 103"]
-  runner["runner.py — 90"]
-  narrative["narrative.py — 77"]
-
-  cli --> viz
-  cli --> mutate
-  cli --> roles
-  cli --> ledger
-  cli --> integrity
-  cli --> runner
-  cli --> config
-  cli --> spec
-  cli --> backends
-  cli --> narrative
-  mutate --> runner
-  mutate --> config
-  roles --> integrity
-  roles --> spec
-  runner --> reports
-  runner --> config
-  reports --> spec
-  integrity --> spec
-  viz --> narrative
-  spec --> narrative
-  backends <--> api
-  plugin --> spec
-
-  style cli fill:#3d4f7c,stroke:#2a3757,color:#ffffff
-  style spec fill:#1f7a4c,stroke:#155a38,color:#ffffff
-  style ledger fill:#1f7a4c,stroke:#155a38,color:#ffffff
-  style integrity fill:#b3382e,stroke:#8a2b23,color:#ffffff
-```
-
-| module | responsibility |
+| | |
 |---|---|
-| `spec.py` | Gherkin parsing, scenario identity, canonical hashing, holdout stripping |
-| `narrative.py` | user-story grammar (`As a / I want / So that`) |
-| `ledger.py` | the scenario ledger, its status rules and its invariants |
-| `integrity.py` | zones, read/write maps, write guards, rollback, the standing audit |
-| `roles.py` | staged, guarded turns — the isolation mechanism |
-| `config.py` | `shalt.toml`, runner presets: what makes the tool language-agnostic |
-| `reports.py` | Cucumber JSON and Cucumber Messages parsers, bound by `@rid` tag |
-| `runner.py` | invokes the configured runner, folds results back |
-| `pytest_plugin.py` | native Python binding: pytest-bdd outcomes → rids |
-| `backends.py` | the `Backend` protocol; fixture and `claude -p` adapters |
-| `api_backend.py` | OpenAI-compatible adapter (Grok, OpenAI) with a scoped tool loop |
-| `mutate.py` | mutation testing the oracle |
-| `viz.py` | the tree, Mermaid diagrams, the HTML dashboard |
-| `cli.py` | command surface |
+| `spec` | Feature/Scenario parse, `@rid:`, `#observe:`, hashes |
+| `ledger` | status, first colour, amendments |
+| `integrity` | zone guard; Then-body lint via `oracles` |
+| `oracles` | observe lock; a Then that acts instead of observing |
+| `roles` | staged turn + rollback |
+| `pipeline` | Play: author → design → tests → build; park at n/n |
+| `bindings` | which scenarios actually have step defs |
+| `runner` | cucumber-family reports → ledger |
+| `backends` | `Backend` trait; fixture, grok, qwen, openai |
 
 ## Workspace layout
 

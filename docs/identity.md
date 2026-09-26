@@ -83,17 +83,19 @@ doesn't**:
 
 Rendered as text, then `sha256`, truncated to 32 hex characters.
 
-```python
-# spec.py — Scenario.canonical
-parts = [
-    f"FEATURE:{feature_name}",
-    "BACKGROUND:\n" + "\n".join(background),
-    f"TAGS:{','.join(sorted(t for t in tags if not t.startswith('@rid:')))}",
-    f"{keyword.upper()}:{name}",
-    "STEPS:\n"    + "\n".join(steps),
-    "EXAMPLES:\n" + "\n".join(examples),
-]
 ```
+FEATURE:{name}
+BACKGROUND:
+…
+TAGS:…          # sorted; @rid: omitted
+SCENARIO:{name}
+STEPS:
+…
+EXAMPLES:
+…
+```
+
+See `Scenario::canonical` in `crates/shalt-core/src/spec.rs`.
 
 Two deliberate choices worth challenging if you ever revisit this:
 

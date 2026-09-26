@@ -9,7 +9,8 @@ straight about where its own guarantees stop.
 Path refusals are tested without a network. Fixtures remain the offline demo.
 
 A live green suite still needs `shalt mutate` afterwards: the model that wrote the steps is
-not a proof that the steps assert anything. The `claude-cli` backend is written and unverified.
+not a proof that the steps assert anything. `shalt verify` also reads Then bodies; titles-only
+review is taking the spec's word.
 
 ## Gherkin's expressiveness ceiling
 
@@ -26,8 +27,7 @@ check them — probably a separate obligation type with its own runner, not a Gh
 
 - **Confidentiality is layer-one only.** You cannot un-read a file. The workspace guard detects
   and rolls back writes, but if a backend can read outside its stage, the isolation is already
-  gone. For the API backend this is enforced properly; for `claude-cli` it depends on Claude
-  Code's own permission model, unverified.
+  gone. The HTTP adapters resolve every path inside the stage and refuse absolute paths.
 - **Inference from failure output.** The digest is filtered to the role's visible scenarios, but
   within those it is verbatim, so an implementer can reverse-engineer assertions from error text.
 - **Resource exhaustion.** Beyond the runner timeout there is no memory, disk or wall-clock cap.
@@ -55,12 +55,13 @@ Neither produces a guarantee. They raise the cost of a bad oracle from zero to n
 
 | gap | consequence |
 |---|---|
-| no cost or token accounting in the build loop | a 40-turn build does not report what it spent |
 | no concurrency control on the ledger | two `shalt` commands at once lose one set of writes |
 | no `shalt undo` | rolling back an approval means editing the ledger by hand |
 | no incremental runs | every turn runs the whole suite |
-| no CI recipe shipped | exit codes are stable and documented, but there is no example workflow |
-| the dashboard is a snapshot | it does not update itself; regenerate after each run |
+| no CI recipe shipped | exit codes are documented; there is no example workflow |
+| the dashboard is a snapshot | regenerate after a run |
+
+Spend vs forecast is on the desk (tokens and time per project). That is telemetry, not a cap.
 
 ## Non-goals
 

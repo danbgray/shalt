@@ -128,17 +128,15 @@ A rejected turn is rejected **wholesale**. There is no partial acceptance:
 - the role's own zones are *not* mirrored back, because the mirror step never runs;
 - the stage's temp directory is removed in a `finally` block.
 
-`GuardedTurn.__exit__` restores on *any* exception, not only on a detected violation. A backend
-that crashes mid-write therefore cannot leave the workspace half-modified.
+The guard restores on any failure, not only on a detected violation. A backend that crashes
+mid-write cannot leave the workspace half-modified.
 
 ## Known gaps
 
-- **Read isolation depends on the backend honouring the stage as its working directory.** The
-  `api_backend` tool loop enforces this properly: every path is resolved inside the stage, and
-  absolute paths are refused rather than reinterpreted. The `claude-cli` backend runs with the
-  stage as `cwd` and relies on Claude Code's own permission model; if that model allows reads
-  above `cwd`, layer 1's confidentiality guarantee is weaker for that backend than for the API
-  one. This is not currently tested against a live CLI run.
+- **Read isolation depends on the backend honouring the stage.** The HTTP tool loop resolves
+  every path inside the stage and refuses absolute paths. A hostile backend that ignores the
+  stage is outside the threat model — the adversary is a model taking shortcuts, not an
+  attacker with arbitrary code execution.
 - **Nothing prevents the implementer from inferring assertions out of failure output.** The
   digest is filtered to visible scenarios, but within those it is verbatim.
 - **A role could exhaust resources** — there is no memory, disk, or wall-clock cap beyond the

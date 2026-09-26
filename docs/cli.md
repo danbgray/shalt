@@ -7,7 +7,7 @@ shalt [--root DIR] [--backend NAME] [--fixtures DIR] [--model M] [--base-url URL
 | global flag | default | meaning |
 |---|---|---|
 | `--root` | `.` | workspace root |
-| `--backend` | `fixture` | `fixture`, `claude-cli`, `grok`, `openai` |
+| `--backend` | `fixture` | `fixture`, `grok`, `qwen`, `openai` |
 | `--fixtures` | — | fixture directory, required by the fixture backend |
 | `--model` | per backend | override the backend's default model |
 | `--base-url` | per backend | override the API base URL |

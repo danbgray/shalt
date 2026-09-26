@@ -1,12 +1,13 @@
 # Backends
 
-A backend is how a role's turn actually gets done. The protocol is deliberately tiny, because
-everything that matters — isolation, rollback, attribution — lives outside it.
+A backend is how a role's turn actually gets done. The trait is tiny, because isolation,
+rollback, and attribution live outside it.
 
-```python
-class Backend(Protocol):
-    name: str
-    def run(self, role: str, prompt: str, stage: Path) -> str: ...
+```rust
+pub trait Backend: Send {
+    fn name(&self) -> &str;
+    fn run(&mut self, role: &str, prompt: &str, stage: &Path) -> Result<String, String>;
+}
 ```
 
 The backend receives a **staged** directory containing only the zones its role may read, does its
@@ -16,8 +17,8 @@ backend cannot opt out of the guard: it is wrapped by the caller, not invoked by
 | backend | selector | needs | used for |
 |---|---|---|---|
 | fixture | `--backend fixture --fixtures <dir>` | nothing | the test suite and the offline demo |
-| Claude CLI | `--backend claude-cli` | `claude` on PATH | local development against Claude Code |
-| Grok | `--backend grok` | `XAI_API_KEY` | xAI, via its OpenAI-compatible API |
+| Grok | `--backend grok` | `XAI_API_KEY` | xAI |
+| Qwen | `--backend qwen` | Ollama | local write pool |
 | OpenAI | `--backend openai` | `OPENAI_API_KEY` | same adapter, different preset |
 
 `--model` overrides the default; `--base-url` points the OpenAI-compatible adapter at any other
@@ -25,9 +26,9 @@ endpoint that speaks the protocol.
 
 ## Role system prompts
 
-Held in `backends._ROLE_SYSTEM`, one per role, and shared by every backend. They state the
-isolation as fact rather than as a request — the stepwright is told it sees no implementation
-*because that is true*, which is a different kind of instruction from "please do not look."
+Role system prompts live in `crates/shalt-core` (`roles` / `compose`). They state isolation as
+fact — the stepwright is told it sees no implementation *because that is true*, which is a
+different instruction from "please do not look."
 
 The stepwright's prompt contains the one line that matters most in the whole system:
 
@@ -52,26 +53,10 @@ The project ships four fixture sets:
 | `overfit` | an implementer that hardcodes the visible examples |
 | `weak-oracle` | a **stepwright** whose assertions do not check the value |
 
-## ClaudeCLIBackend
-
-Runs each role as one headless `claude -p` turn with the stage as `cwd`:
-
-```
-claude -p <prompt>
-  --output-format text
-  --permission-mode acceptEdits
-  --allowedTools Read,Write,Edit,Glob,Grep
-  --append-system-prompt <role system prompt>
-```
-
-`Bash` is deliberately absent from `--allowedTools`. Note the caveat in
-[isolation.md](isolation.md#known-gaps): read confidentiality for this backend rests on Claude
-Code's own permission model, and that has not been verified against a live run.
-
 ## OpenAICompatBackend
 
-xAI's API is OpenAI-compatible, so one adapter covers Grok, OpenAI, and anything else on that
-protocol. Standard library only — `urllib`, no SDK, no dependency.
+xAI's API is OpenAI-compatible, so one adapter covers Grok, OpenAI, Ollama's `/v1`, and
+anything else on that protocol. `ureq`, no vendor SDK.
 
 The model works through **four scoped tools** rather than a shell:
 
