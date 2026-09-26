@@ -108,7 +108,7 @@ macOS: `./scripts/macos-install.sh` puts Shalt.app in Applications and `shalt` o
 
 ![Desk inbox](docs/images/desk-inbox.png)
 
-*Catalog. One project plays at a time. Forecast vs spent is measured.*
+*Catalog. One Play at a time. Recipe share failed a zone write (stepwright tried `src/`) — isolation held.*
 
 ![New project](docs/images/desk-new.png)
 
@@ -120,7 +120,7 @@ macOS: `./scripts/macos-install.sh` puts Shalt.app in Applications and `shalt` o
 
 ![Tests](docs/images/desk-tests.png)
 
-*Tests tab. Pending is not green.*
+*Tests tab. Bound step files, not an empty pane.*
 
 ![Play loop](docs/images/desk-loop.png)
 
@@ -166,7 +166,7 @@ Sketch of writing a recipe (`mockups/archive-sketches/journeys/recipes/recipes.h
 
 ![Create a recipe wireframe](docs/images/wire-recipes-sketch.png)
 
-Ingredient packets / Amazon Fresh (`mockups/journeys/ingredients/ingredients.html`):
+Ingredient packets / Amazon Fresh (`mockups/archive-sketches/journeys/ingredients/ingredients.html`):
 
 ![Ingredient packets wireframe](docs/images/wire-ingredients.png)
 
