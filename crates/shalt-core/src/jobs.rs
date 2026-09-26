@@ -1463,6 +1463,9 @@ pub fn guess_is_concrete(guess: &str) -> bool {
     if l.starts_with("proceed with") {
         return false;
     }
+    if g.ends_with('?') {
+        return false;
+    }
     if l == "idk" || l == "unknown" || l == "n/a" || l == "tbd" {
         return false;
     }
@@ -1487,6 +1490,9 @@ pub fn ask_is_product_behavior(question: &str) -> bool {
         return false;
     }
     if l.contains("feature implementation") {
+        return false;
+    }
+    if l.contains("spec_hash") || l.contains("spec hash") {
         return false;
     }
     true
@@ -2275,6 +2281,10 @@ mod ask_match_tests {
         assert!(ask_is_product_behavior(
             "When does the monthly patron subscription start?"
         ));
+        assert!(!ask_is_product_behavior(
+            "What is the actual spec_hash for tasks UI?"
+        ));
+        assert!(!guess_is_concrete("What is the correct spec_hash for tasks UI?"));
     }
 
     #[test]

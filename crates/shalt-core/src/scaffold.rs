@@ -1449,6 +1449,49 @@ pub fn apply_js_contract_stubs(root: &Path) -> Result<Vec<String>, String> {
     Ok(wrote)
 }
 
+/// Copy `src/` aside when the spec's Then/observe changed. The copy is the old
+/// implementation; Play then fills stubs. Cosmetic Given-only hash changes do
+/// not call this — those stay STALE and keep the code.
+pub fn archive_src(root: &Path) -> Result<Option<PathBuf>, String> {
+    let src = root.join("src");
+    if !src.is_dir() {
+        return Ok(None);
+    }
+    let mut nonempty = false;
+    if let Ok(rd) = std::fs::read_dir(&src) {
+        nonempty = rd.flatten().any(|e| {
+            e.file_name() != ".gitkeep" && e.file_name() != "lib.rs"
+        });
+    }
+    if !nonempty {
+        return Ok(None);
+    }
+    let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
+    let dest = root.join(".shalt/archive").join(format!("src-{stamp}"));
+    copy_dir(&src, &dest)?;
+    Ok(Some(dest))
+}
+
+fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(to).map_err(|e| e.to_string())?;
+    for e in walkdir::WalkDir::new(from).into_iter().flatten() {
+        let rel = e.path().strip_prefix(from).unwrap_or(e.path());
+        if rel.as_os_str().is_empty() {
+            continue;
+        }
+        let dest = to.join(rel);
+        if e.file_type().is_dir() {
+            std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+        } else {
+            if let Some(p) = dest.parent() {
+                std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
+            }
+            let _ = std::fs::copy(e.path(), &dest);
+        }
+    }
+    Ok(())
+}
+
 pub fn has_final_look(root: &Path) -> bool {
     root.join("mockups/tokens.final.css").is_file()
 }

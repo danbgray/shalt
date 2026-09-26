@@ -1,6 +1,6 @@
 use shalt_core::config::init_workspace;
 use shalt_core::scaffold::{
-    apply_js_contract_stubs, apply_step_stubs, fill_all_js_pending_oracles,
+    apply_js_contract_stubs, apply_step_stubs, archive_src, fill_all_js_pending_oracles,
     fill_js_pending_oracles, is_fillable_stub,
     parse_js_contract, quarantine_duplicate_step_files, steps_source_ok, write_js_world_if_missing,
 };
@@ -361,6 +361,17 @@ fn fill_js_pending_oracles_covers_vague_author_phrases() {
     assert!(t.path().join("src/store.js").is_file());
     let store = std::fs::read_to_string(t.path().join("src/store.js")).unwrap();
     assert!(store.contains("export function createRecipe"), "{store}");
+}
+
+#[test]
+fn archive_src_snapshots_then_leaves_a_copy() {
+    let t = TempDir::new().unwrap();
+    std::fs::create_dir_all(t.path().join("src")).unwrap();
+    std::fs::write(t.path().join("src/store.js"), "export function add() {}\n").unwrap();
+    let dest = archive_src(t.path()).unwrap().expect("copied");
+    assert!(dest.join("store.js").is_file());
+    let body = std::fs::read_to_string(dest.join("store.js")).unwrap();
+    assert!(body.contains("export function add"));
 }
 
 #[test]

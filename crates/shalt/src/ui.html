@@ -6132,7 +6132,7 @@ function deskPrompt(opts){
     modal.innerHTML = `<div class="sheet keys-sheet" role="dialog" aria-label="${esc(title || ok)}">
       ${title ? `<div class="cap">${esc(title)}</div>` : ''}
       ${opts.body ? `<p class="stat" style="margin:0 0 10px">${esc(opts.body)}</p>` : ''}
-      <input data-prompt type="text" value="${esc(initial)}" style="width:100%;margin:0 0 14px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:14px/1.4 var(--font);padding:8px 10px">
+      <input data-prompt type="text" value="${esc(initial)}" ${opts.placeholder ? `placeholder="${esc(opts.placeholder)}"` : ''} style="width:100%;margin:0 0 14px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:14px/1.4 var(--font);padding:8px 10px">
       <div class="compose-bar">
         ${cancel ? `<button type="button" class="ghost" data-no>${esc(cancel)}</button>` : '<span></span>'}
         <button type="button" data-yes>${esc(ok)}</button>
@@ -7724,10 +7724,13 @@ function paintAskLog(p){
     btn.onclick = async () => {
       const a = asks[Number(btn.getAttribute('data-correct'))];
       if (!a || !p || !p.id) return;
+      const guess = (a.answer || a.guess || '').trim();
+      const guessIsQuestion = /\?\s*$/.test(guess);
       const next = await deskPrompt({
-        title: 'Correct this',
+        title: 'Correct the answer',
         body: a.question,
-        value: a.answer || a.guess || '',
+        value: guessIsQuestion ? '' : guess,
+        placeholder: 'The answer — not a rephrased question',
         ok: 'Save'
       });
       if (next == null || !String(next).trim()) return;

@@ -133,7 +133,7 @@ pub fn ensure_play_lock(root: &Path) -> Result<usize, String> {
             "oracles": current_oracles,
         });
     } else {
-        lock_oracle_amendments(&mut led, &current_oracles);
+        lock_oracle_amendments(&mut led, &root, &current_oracles);
     }
     let mut board = Board::load(&root.join(".shalt/board.json"));
     board.sync_new_rids(&features);
@@ -143,7 +143,7 @@ pub fn ensure_play_lock(root: &Path) -> Result<usize, String> {
     Ok(minted.len())
 }
 
-fn lock_oracle_amendments(led: &mut Ledger, current: &serde_json::Value) {
+pub fn lock_oracle_amendments(led: &mut Ledger, root: &Path, current: &serde_json::Value) {
     let locked = led.spec_lock.get("oracles").cloned();
     if locked.is_none()
         || locked
@@ -163,6 +163,7 @@ fn lock_oracle_amendments(led: &mut Ledger, current: &serde_json::Value) {
     let Some(new_map) = current.as_object() else {
         return;
     };
+    let mut changed = false;
     for (rid, now_v) in new_map {
         let was_v = old_map.get(rid);
         if was_v == Some(now_v) {
@@ -172,9 +173,24 @@ fn lock_oracle_amendments(led: &mut Ledger, current: &serde_json::Value) {
             .map(|v| v.to_string())
             .unwrap_or_else(|| "unset".into());
         led.note_amendment(rid, "observe", &was, &now_v.to_string());
+        changed = true;
     }
     if let Some(obj) = led.spec_lock.as_object_mut() {
         obj.insert("oracles".into(), current.clone());
+    }
+    if !changed {
+        return;
+    }
+    // Then / #observe: changed: keep a snapshot (the old branch) and clear
+    // JS stubs so Play does not keep an invalidated implementation.
+    if let Ok(Some(dest)) = crate::scaffold::archive_src(root) {
+        led.amendments.push(serde_json::json!({
+            "at": chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+            "event": "archived_src",
+            "path": dest.display().to_string(),
+            "why": "Then or #observe: changed — old implementation is invalid",
+        }));
+        let _ = crate::scaffold::apply_js_contract_stubs(root);
     }
 }
 

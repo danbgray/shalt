@@ -1888,6 +1888,8 @@ async fn api_project_action(
                     if let Ok(features) = load_specs(&spec_dir, false) {
                         let mut led = Ledger::load(&root.join(".shalt/ledger.json")).unwrap_or_default();
                         led.sync_spec(&features);
+                        let oracles = shalt_core::oracles::oracle_lock_map(&features);
+                        shalt_core::pipeline::lock_oracle_amendments(&mut led, &root, &oracles);
                         let _ = led.save(&root.join(".shalt/ledger.json"));
                         let mut board = Board::load(&root.join(".shalt/board.json"));
                         board.sync_new_rids(&features);
