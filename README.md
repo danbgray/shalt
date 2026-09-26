@@ -15,7 +15,9 @@ shalt ui
 
 `shall <sentence>` is `shalt do`. `--yes` accepts every scenario. `examples/invoice/demo.sh` is the offline loop (no API key). `examples/rust-billing` is cucumber-rs.
 
-Docs: [architecture](docs/architecture.md) · [isolation](docs/isolation.md) · [ledger](docs/ledger.md) · [identity](docs/identity.md) · [runners](docs/runners.md) · [CLI](docs/cli.md) · [limitations](docs/limitations.md) · [the rest](docs/README.md)
+**[Manual](docs/manual.md)** — desk screenshots, the Play loop, `#observe:`.
+
+Also: [architecture](docs/architecture.md) · [isolation](docs/isolation.md) · [ledger](docs/ledger.md) · [identity](docs/identity.md) · [runners](docs/runners.md) · [CLI](docs/cli.md) · [limitations](docs/limitations.md) · [index](docs/README.md)
 
 ## Why "shalt"
 

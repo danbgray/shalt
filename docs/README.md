@@ -2,6 +2,8 @@
 
 Shalt turns an English request into Feature/Scenario obligations, then drives isolated roles until those obligations hold — against the current wording, with a bound test. Green is not "the model said so."
 
+**Start here:** [manual.md](manual.md) (screenshots + how to run the desk).
+
 ## Read in this order
 
 | | |
