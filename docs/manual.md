@@ -48,6 +48,10 @@ English → Feature/Scenario spec → storyboards → pick a language → bound 
 
 Play / Pause / Yolo / language live on the card. Forecast vs spent is measured tokens and time, not a human estimate.
 
+![Plan](images/desk-plan.png)
+
+*Plan tab once a project is open. English interview at the top; Play uses it.*
+
 ## Spec
 
 Every scenario needs a `@rid:` (stamped at approve) and every Then needs `#observe:` — the door, locked before Play.
