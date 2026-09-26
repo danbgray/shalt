@@ -3,3 +3,5 @@ backup/
 last_run.json
 messages.ndjson
 cucumber.json
+ledger.json
+board.json
