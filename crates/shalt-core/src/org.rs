@@ -390,7 +390,7 @@ fn file_stamp(path: &Path) -> u64 {
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
-    t ^ meta.len().wrapping_mul(1_000_003)
+    t.wrapping_mul(4099).wrapping_add(meta.len())
 }
 
 fn dir_mark(dir: &Path) -> (u64, u32) {
@@ -398,21 +398,21 @@ fn dir_mark(dir: &Path) -> (u64, u32) {
 }
 
 fn dir_mark_depth(dir: &Path, depth: u32) -> (u64, u32) {
-    let mut max = file_stamp(dir);
+    let mut acc = file_stamp(dir);
     let mut n = 0u32;
     if let Ok(rd) = fs::read_dir(dir) {
         for e in rd.flatten() {
             n += 1;
             let p = e.path();
-            max = max.max(file_stamp(&p));
+            acc = acc.wrapping_add(file_stamp(&p));
             if depth > 0 && p.is_dir() {
                 let inner = dir_mark_depth(&p, depth - 1);
-                max = max.max(inner.0);
+                acc = acc.wrapping_add(inner.0);
                 n += inner.1;
             }
         }
     }
-    (max, n)
+    (acc, n)
 }
 
 /// Cheap fingerprint of the on-disk magazine (spec, drawings, journal, plan).

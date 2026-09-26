@@ -103,7 +103,7 @@ fn focused_stepwright_stage_is_one_journey() {
     write_feature(t.path());
     std::fs::write(
         t.path().join("spec/other.feature"),
-        "@epic:other\nFeature: Other\n  Scenario: X\n    When y\n    Then z\n",
+        "@epic:other\nFeature: Other\n  Scenario: X\n    When y\n    Then z\n    #observe: z is visible\n",
     )
     .unwrap();
     shalt_core::apply_step_stubs(t.path(), "money").unwrap();
@@ -1284,8 +1284,8 @@ fn focus_journey_scopes_the_tests_job() {
     let proj = home.path().join("sje");
     init_workspace(&proj, "rust", "sje").unwrap();
     fs::create_dir_all(proj.join("spec")).unwrap();
-    fs::write(proj.join("spec/desk.feature"), "@epic:desk\nFeature: Desk\n  Scenario: Open\n    When the buyer opens the desk\n    Then the desk lists 4 travelers\n").unwrap();
-    fs::write(proj.join("spec/traveler.feature"), "@epic:traveler\nFeature: Traveler\n  Scenario: Missing\n    When the user opens \"/p/x\"\n    Then the page shows missing\n").unwrap();
+    fs::write(proj.join("spec/desk.feature"), "@epic:desk\nFeature: Desk\n  Scenario: Open\n    When the buyer opens the desk\n    Then the desk lists 4 travelers\n    #observe: desk page lists 4 travelers\n").unwrap();
+    fs::write(proj.join("spec/traveler.feature"), "@epic:traveler\nFeature: Traveler\n  Scenario: Missing\n    When the user opens \"/p/x\"\n    Then the page shows missing\n    #observe: GET /p/x is a missing page\n").unwrap();
     skip_design(&proj);
     let mut board = shalt_core::Board::load(&proj.join(".shalt/board.json"));
     board.focus_journey = "traveler".into();

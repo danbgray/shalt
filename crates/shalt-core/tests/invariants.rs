@@ -1875,7 +1875,12 @@ fn ui_registry_prunes_dead_pids() {
 #[test]
 fn wait_until_up_is_none_when_nothing_listens() {
     with_shalt_home(|| {
-        assert!(shalt_core::uis::wait_until_up(std::time::Duration::from_millis(40)).is_none());
+        let t = TempDir::new().unwrap();
+        std::env::set_var("SHALT_HOME", t.path());
+        assert!(
+            shalt_core::uis::wait_until_up(std::time::Duration::from_millis(40)).is_none(),
+            "an empty SHALT_HOME must not pick up some other desk on the machine"
+        );
     });
 }
 
@@ -1967,7 +1972,11 @@ fn diagnose_spend_limit_points_at_qwen() {
     let issue = shalt_core::jobs::diagnose(q.get(&id).unwrap());
     assert!(issue.title.to_lowercase().contains("credit") || issue.title.to_lowercase().contains("spending"), "{}", issue.title);
     assert!(issue.steps.iter().any(|s| s.to_lowercase().contains("qwen")), "{:?}", issue.steps);
-    assert!(issue.steps.iter().any(|s| s.to_lowercase().contains("play")), "{:?}", issue.steps);
+    assert!(
+        issue.steps.iter().any(|s| s.to_lowercase().contains("retry")),
+        "{:?}",
+        issue.steps
+    );
 }
 
 #[test]
