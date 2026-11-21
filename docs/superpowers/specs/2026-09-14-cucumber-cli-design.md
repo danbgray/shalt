@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-14
 **Status:** approved
-**Repo:** this repository (`github.com/rivletio/shalt`)
+**Repo:** this repository (`github.com/danbgray/shalt`)
 
 ## Goal
 

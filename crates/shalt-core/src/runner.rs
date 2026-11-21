@@ -152,6 +152,15 @@ pub fn run_suite_with(root: &Path, cfg: &Config, extra: &[String]) -> SuiteRun {
     if (javascript || python) && !steps_has_tests(&steps) {
         return empty_run();
     }
+    if javascript {
+        let cucumber = root.join("node_modules/@cucumber/cucumber");
+        if !cucumber.is_dir() && root.join("package.json").is_file() {
+            let _ = Command::new("npm")
+                .args(["install", "--no-fund", "--no-audit"])
+                .current_dir(root)
+                .output();
+        }
+    }
     if python {
         let interp = pytest_interp(&cfg.command);
         if !python_has_module(interp, "pytest_bdd") {

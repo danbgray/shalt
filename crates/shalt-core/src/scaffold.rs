@@ -9,14 +9,268 @@ use crate::spec::load_specs;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-pub const JS_WORLD: &str = r#"import { setWorldConstructor } from '@cucumber/cucumber';
+pub const JS_WORLD: &str = r#"import { AfterAll, Before, BeforeAll, setWorldConstructor } from '@cucumber/cucumber';
+import { createServer } from '../src/server.js';
+import { resetStore } from '../src/store.js';
 
 function World() {
   this.currentUser = null;
   this.lastError = null;
+  this.baseUrl = globalThis.__shaltBaseUrl;
 }
 
 setWorldConstructor(World);
+
+let server;
+BeforeAll(async function () {
+  const started = await createServer();
+  server = started.server;
+  globalThis.__shaltBaseUrl = started.baseUrl;
+});
+Before(function () {
+  resetStore();
+  this.baseUrl = globalThis.__shaltBaseUrl;
+});
+AfterAll(async function () {
+  if (server) await new Promise((resolve) => server.close(resolve));
+});
+"#;
+
+const JS_SERVER_STUB: &str = r#"import http from 'node:http';
+
+/** Listens, answers 404. Build replaces this with /r/:slug and /tasks. */
+export function createServer() {
+  const server = http.createServer((_req, res) => {
+    res.writeHead(404, { 'content-type': 'text/plain' });
+    res.end('not implemented');
+  });
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address();
+      resolve({ server, baseUrl: `http://127.0.0.1:${port}`, port });
+    });
+  });
+}
+"#;
+
+const JS_SERVER: &str = r#"import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import * as store from './store.js';
+
+function slugTitle(title) {
+  return String(title || 'recipe').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+}
+
+function esc(s) {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function recipePage(recipe, view) {
+  const title = view.title || recipe.title;
+  const ings = (recipe.ingredients || [])
+    .map((i) => '<li>' + esc(i.name || i) + (i.quantity ? ' · ' + esc(i.quantity) : '') + '</li>')
+    .join('');
+  const steps = (recipe.steps || [])
+    .map((s) => {
+      const ts = s.timestamp || s.startAt || '';
+      return (
+        '<li data-step="' +
+        esc(s.number) +
+        '" data-start="' +
+        esc(ts) +
+        '">' +
+        esc(s.text) +
+        (ts ? ' @' + esc(ts) : '') +
+        '</li>'
+      );
+    })
+    .join('');
+  const packs = (store.packetsFor ? store.packetsFor(recipe) : [])
+    .map((p) => {
+      const n = (p.items && p.items.length) || 0;
+      const url = p.orderUrl || '';
+      return (
+        '<section data-packet="' +
+        esc(p.name) +
+        '" data-count="' +
+        n +
+        '">packet ' +
+        esc(p.name) +
+        ' · ' +
+        n +
+        ' item' +
+        (n === 1 ? '' : 's') +
+        (url ? ' · <a href="' + esc(url) + '">Amazon Fresh</a> ' + esc(url) : '') +
+        '</section>'
+      );
+    })
+    .join('');
+  const video = recipe.video
+    ? '<p data-video="' + esc(recipe.video) + '">' + esc(recipe.video) + '</p>'
+    : '';
+  return (
+    '<!doctype html><html><head><meta charset="utf-8"><title>' +
+    esc(title) +
+    '</title></head><body><h1>' +
+    esc(title) +
+    '</h1>' +
+    (ings ? '<ul data-ingredients>' + ings + '</ul>' : '') +
+    (steps ? '<ol data-steps>' + steps + '</ol>' : '') +
+    packs +
+    video +
+    '</body></html>'
+  );
+}
+
+function hydrateRecipe(r, body) {
+  for (const ing of body.ingredients || []) {
+    if (store.addIngredient) store.addIngredient(r, ing);
+  }
+  for (const st of body.steps || []) {
+    const n = st.number || st[0] || 1;
+    const text = st.text || st[1] || st;
+    if (store.addStep) store.addStep(r, n, text);
+    if (st.timestamp && store.tagStepTimestamp) store.tagStepTimestamp(r, n, st.timestamp);
+  }
+  if (body.video && store.attachFullVideo) store.attachFullVideo(r, body.video);
+  if (body.patronOnly && store.setPatronOnly) store.setPatronOnly(r, true);
+  for (const pack of body.packets || []) {
+    if (!store.createPacket) continue;
+    const p = store.createPacket(r, pack.name, pack.items || []);
+    if (pack.orderUrl && store.attachAmazonFreshLink) store.attachAmazonFreshLink(p, pack.orderUrl);
+  }
+}
+
+function readBody(req) {
+  return new Promise((resolve) => {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => {
+      const raw = Buffer.concat(chunks).toString('utf8');
+      try {
+        resolve(raw ? JSON.parse(raw) : {});
+      } catch (_) {
+        resolve({});
+      }
+    });
+  });
+}
+
+function send(res, code, body, type) {
+  const buf = typeof body === 'string' ? body : JSON.stringify(body);
+  res.writeHead(code, { 'content-type': type || 'application/json; charset=utf-8' });
+  res.end(buf);
+}
+
+function serveUi(url, res) {
+  const srcDir = path.dirname(fileURLToPath(import.meta.url));
+  const ui = path.join(srcDir, 'ui');
+  let rel = url.pathname === '/' ? '/index.html' : url.pathname;
+  rel = path.normalize(rel).replace(/^(\.\.[/\\])+/, '');
+  let file = path.join(ui, rel);
+  if (!file.startsWith(ui) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
+    file = path.join(srcDir, rel);
+    if (!file.startsWith(srcDir) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
+      return false;
+    }
+  }
+  const ext = path.extname(file);
+  const type =
+    ext === '.html'
+      ? 'text/html; charset=utf-8'
+      : ext === '.js'
+        ? 'text/javascript; charset=utf-8'
+        : ext === '.css'
+          ? 'text/css; charset=utf-8'
+          : 'application/octet-stream';
+  send(res, 200, fs.readFileSync(file, 'utf8'), type);
+  return true;
+}
+
+export function createServer(opts = {}) {
+  const want = opts.port ?? Number(process.env.SHALT_PORT || 0);
+  const server = http.createServer(async (req, res) => {
+    const url = new URL(req.url || '/', 'http://127.0.0.1');
+    const user = req.headers['x-user'] || null;
+    if (req.method === 'GET' && url.pathname.startsWith('/r/')) {
+      const wantPath = url.pathname;
+      const slug = wantPath.slice(3);
+      const titles = typeof store.allRecipes === 'function' ? store.allRecipes() : [];
+      let recipe = null;
+      for (const t of titles.slice().reverse()) {
+        const r = store.getRecipe(t);
+        if (!r) continue;
+        if (r.shareUrl === wantPath || slugTitle(r.title) === slug) {
+          recipe = r;
+          break;
+        }
+      }
+      const view = store.viewRecipe ? store.viewRecipe(user, recipe) : { status: 'not-found' };
+      if (!recipe || view.status === 'not-found' || view.notFound) {
+        send(res, 404, 'not found', 'text/plain');
+        return;
+      }
+      if (view.status === 'paywall') {
+        send(res, 402, '<h1>' + esc(view.title || 'patron-only') + '</h1><p>paywall</p>', 'text/html; charset=utf-8');
+        return;
+      }
+      send(res, 200, recipePage(recipe, view), 'text/html; charset=utf-8');
+      return;
+    }
+    if (req.method === 'GET' && url.pathname === '/tasks') {
+      const filter = url.searchParams.get('filter') || 'all';
+      if (store.setFilter) store.setFilter(filter);
+      const list = store.visibleList ? store.visibleList() : store.allList ? store.allList() : [];
+      send(res, 200, list);
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/tasks') {
+      const body = await readBody(req);
+      if (store.addTask) store.addTask(body.title);
+      send(res, 201, store.visibleList ? store.visibleList() : []);
+      return;
+    }
+    if (req.method === 'GET' && url.pathname === '/recipes') {
+      send(res, 200, store.allRecipes ? store.allRecipes() : []);
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/recipes') {
+      const body = await readBody(req);
+      const who = body.user || user || 'maya@example.com';
+      const r = store.createRecipe ? store.createRecipe(who, body.title) : null;
+      if (r) hydrateRecipe(r, body);
+      if (r && store.publish) store.publish(r);
+      send(res, 201, { title: r && r.title, url: r && r.shareUrl });
+      return;
+    }
+    if (req.method === 'GET' && url.pathname === '/patrons') {
+      const who = url.searchParams.get('user') || user;
+      const o = store.patronageOffer ? store.patronageOffer(who) : null;
+      send(res, 200, { user: who, amountPerMonth: o && o.amountPerMonth });
+      return;
+    }
+    if (req.method === 'GET' && serveUi(url, res)) return;
+    send(res, 404, 'not found', 'text/plain');
+  });
+  return new Promise((resolve) => {
+    server.listen(want, '127.0.0.1', () => {
+      const { port } = server.address();
+      resolve({ server, baseUrl: `http://127.0.0.1:${port}`, port });
+    });
+  });
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  createServer().then((s) => {
+    console.log(s.baseUrl);
+  });
+}
 "#;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -123,11 +377,46 @@ pub fn write_js_world_if_missing(root: &Path) -> Result<Option<PathBuf>, String>
     }
     let path = root.join(&cfg.steps).join("world.js");
     if path.exists() {
-        return Ok(None);
+        let prev = std::fs::read_to_string(&path).unwrap_or_default();
+        if prev.contains("createServer") {
+            return Ok(None);
+        }
     }
     std::fs::create_dir_all(root.join(&cfg.steps)).map_err(|e| e.to_string())?;
     std::fs::write(&path, JS_WORLD).map_err(|e| e.to_string())?;
     Ok(Some(path))
+}
+
+fn server_is_stub(body: &str) -> bool {
+    let t = body.trim();
+    t.is_empty()
+        || t.contains("not implemented")
+        || !t.contains("pathname.startsWith('/r/')")
+}
+
+/// 404 listener so BeforeAll can bind a port. Build replaces it with /r/:slug and /tasks.
+pub fn fill_js_server(root: &Path, complete: bool) -> Result<bool, String> {
+    let cfg = Config::load(root).unwrap_or_default();
+    if cfg.stack != "javascript" && !root.join("package.json").is_file() {
+        return Ok(false);
+    }
+    let dir = root.join("src");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join("server.js");
+    let prev = std::fs::read_to_string(&path).unwrap_or_default();
+    if complete {
+        if !server_is_stub(&prev) {
+            return Ok(false);
+        }
+        std::fs::write(&path, JS_SERVER).map_err(|e| e.to_string())?;
+        Ok(true)
+    } else {
+        if path.is_file() {
+            return Ok(false);
+        }
+        std::fs::write(&path, JS_SERVER_STUB).map_err(|e| e.to_string())?;
+        Ok(true)
+    }
 }
 
 /// Quarantine dir is outside `steps/` so cucumber `--import steps/**/*.js` cannot see copies.
@@ -502,7 +791,7 @@ pub fn fill_js_pending_oracles(root: &Path, journey: &str) -> Result<Vec<String>
                 }
                 body_lines.push(next.to_string());
             }
-            if let Some((body, imports)) = js_oracle_body(&kw, &pat, &args) {
+            if let Some((body, imports)) = js_then_or_oracle(root, &kw, &pat, &args) {
                 if !seen_pats.insert(pat.clone()) {
                     continue;
                 }
@@ -510,7 +799,12 @@ pub fn fill_js_pending_oracles(root: &Path, journey: &str) -> Result<Vec<String>
                 for i in imports {
                     used.insert(i);
                 }
-                out.push_str(&format!("{kw}('{pat}', function ({args}) {{\n{body}\n}});\n"));
+                let kind = if body.contains("fetch(") {
+                    "async function"
+                } else {
+                    "function"
+                };
+                out.push_str(&format!("{kw}('{pat}', {kind} ({args}) {{\n{body}\n}});\n"));
                 continue;
             }
             out.push_str(line);
@@ -531,7 +825,7 @@ pub fn fill_js_pending_oracles(root: &Path, journey: &str) -> Result<Vec<String>
         return Ok(Vec::new());
     }
     if !used.is_empty() {
-        let _ = fill_js_store_if_stub(root);
+        let _ = fill_js_store_stubs(root, &used);
         let mut by_file: std::collections::BTreeMap<String, BTreeSet<String>> =
             std::collections::BTreeMap::new();
         by_file
@@ -560,7 +854,8 @@ pub fn fill_all_js_pending_oracles(root: &Path) -> Result<Vec<String>, String> {
         all.extend(fill_js_pending_oracles(root, &j)?);
     }
     ensure_js_world_resets(root);
-    let _ = fill_js_store_if_stub(root);
+    let _ = write_js_world_if_missing(root);
+    let _ = fill_js_server(root, false);
     if !all.is_empty() {
         let p = root.join(".shalt/steps.sha");
         if let Some(dir) = p.parent() {
@@ -591,11 +886,148 @@ fn ensure_js_world_resets(root: &Path) {
 
 /// In-memory store matching the JS oracle API. 8B dumps 4096 tokens into
 /// src/models and never exports what the tests import.
-const JS_STORE: &str = r#"let recipes = [];
+const JS_STORE_TODO: &str = r#"import { DatabaseSync } from 'node:sqlite';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+let tasks = [];
+let filter = 'all';
+
+function dbPath() {
+  const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), '../.shalt');
+  fs.mkdirSync(dir, { recursive: true });
+  return process.env.SHALT_DB || path.join(dir, 'app.sqlite');
+}
+function dumpTodo() {
+  try {
+    const d = new DatabaseSync(dbPath());
+    d.exec('CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT);');
+    d.prepare('INSERT OR REPLACE INTO kv (k,v) VALUES (?,?)').run(
+      'todo',
+      JSON.stringify({ tasks, filter })
+    );
+  } catch (_) {}
+}
+function loadTodo() {
+  try {
+    const d = new DatabaseSync(dbPath());
+    const row = d.prepare('SELECT v FROM kv WHERE k = ?').get('todo');
+    if (row && row.v) {
+      const s = JSON.parse(row.v);
+      tasks = s.tasks || [];
+      filter = s.filter || 'all';
+    }
+  } catch (_) {}
+}
+loadTodo();
+
+export function resetStore() {
+  tasks = [];
+  filter = 'all';
+  dumpTodo();
+}
+
+export function addTask(title) {
+  const t = String(title || '').trim();
+  if (!t) throw new Error('title required');
+  tasks.push({ title: t, done: false });
+  dumpTodo();
+  return tasks[tasks.length - 1];
+}
+
+export function ensureActive(title) {
+  let t = tasks.find((x) => x.title === title);
+  if (!t) t = addTask(title);
+  t.done = false;
+  return t;
+}
+
+export function ensureCompleted(title) {
+  let t = tasks.find((x) => x.title === title);
+  if (!t) t = addTask(title);
+  t.done = true;
+  return t;
+}
+
+export function markDone(title) {
+  const t = tasks.find((x) => x.title === title);
+  if (!t) throw new Error('no task ' + title);
+  t.done = true;
+  dumpTodo();
+  return t;
+}
+
+export function setFilter(next) {
+  filter = next;
+  dumpTodo();
+}
+
+export function clearCompleted() {
+  tasks = tasks.filter((t) => !t.done);
+  dumpTodo();
+}
+
+export function allList() {
+  return tasks.map((t) => t.title);
+}
+
+export function activeList() {
+  return tasks.filter((t) => !t.done).map((t) => t.title);
+}
+
+export function completedList() {
+  return tasks.filter((t) => t.done).map((t) => t.title);
+}
+
+export function visibleList() {
+  if (filter === 'active') return activeList();
+  if (filter === 'completed') return completedList();
+  return allList();
+}
+"#;
+
+const JS_STORE: &str = r#"import { DatabaseSync } from 'node:sqlite';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+let recipes = [];
 let packets = [];
 let tags = {};
 let patronage = {};
 let patrons = {};
+
+function dbPath() {
+  const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), '../.shalt');
+  fs.mkdirSync(dir, { recursive: true });
+  return process.env.SHALT_DB || path.join(dir, 'app.sqlite');
+}
+function dumpRecipe() {
+  try {
+    const d = new DatabaseSync(dbPath());
+    d.exec('CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT);');
+    d.prepare('INSERT OR REPLACE INTO kv (k,v) VALUES (?,?)').run(
+      'recipe',
+      JSON.stringify({ recipes, packets, tags, patronage, patrons })
+    );
+  } catch (_) {}
+}
+function loadRecipe() {
+  try {
+    const d = new DatabaseSync(dbPath());
+    const row = d.prepare('SELECT v FROM kv WHERE k = ?').get('recipe');
+    if (row && row.v) {
+      const s = JSON.parse(row.v);
+      recipes = s.recipes || [];
+      packets = s.packets || [];
+      tags = s.tags || {};
+      patronage = s.patronage || {};
+      patrons = s.patrons || {};
+    }
+  } catch (_) {}
+}
+loadRecipe();
 
 export function resetStore() {
   recipes = [];
@@ -603,6 +1035,7 @@ export function resetStore() {
   tags = {};
   patronage = {};
   patrons = {};
+  dumpRecipe();
 }
 
 export function createRecipe(user, title) {
@@ -616,6 +1049,7 @@ export function createRecipe(user, title) {
     video: null,
   };
   recipes.push(r);
+  dumpRecipe();
   return r;
 }
 
@@ -624,10 +1058,15 @@ export function getRecipe(title) {
   return recipes.find((r) => r.title === title) || null;
 }
 
+export function allRecipes() {
+  return recipes.map((r) => r.title);
+}
+
 export function addIngredient(recipe, name) {
   const r = getRecipe(recipe);
   const item = typeof name === 'string' ? { name, quantity: 1 } : name;
   r.ingredients.push(item);
+  dumpRecipe();
   return r;
 }
 
@@ -636,6 +1075,7 @@ export function addStep(recipe, number, text) {
   r.steps = r.steps.filter((s) => s.number !== number);
   r.steps.push({ number, text, timestamp: null });
   r.steps.sort((a, b) => a.number - b.number);
+  dumpRecipe();
   return r;
 }
 
@@ -648,12 +1088,33 @@ export function publish(recipe) {
   r.visibility = 'public';
   const slug = String(r.title || 'recipe').toLowerCase().replace(/[^a-z0-9]+/g, '-');
   r.shareUrl = '/r/' + slug;
+  dumpRecipe();
   return { url: r.shareUrl };
+}
+
+export function isPublic(recipe) {
+  const r = getRecipe(recipe);
+  return !!(r && r.visibility === 'public');
+}
+
+export function openShareUrl(path, viewer) {
+  const want = String(path || '');
+  const slug = want.replace(/^\/r\//, '');
+  const r = recipes.find(
+    (x) =>
+      x.shareUrl === want ||
+      String(x.title || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-') === slug
+  );
+  if (!r) return { status: 'not-found', title: null };
+  return viewRecipe(viewer, r);
 }
 
 export function setVisibility(recipe, visibility) {
   const r = getRecipe(recipe);
   r.visibility = visibility;
+  dumpRecipe();
   return r;
 }
 
@@ -675,6 +1136,7 @@ export function viewRecipe(viewer, recipe) {
 export function attachFullVideo(recipe, url) {
   const r = getRecipe(recipe);
   r.video = url;
+  dumpRecipe();
   return r;
 }
 
@@ -691,6 +1153,7 @@ export function tagStepTimestamp(recipe, number, ts) {
     s = r.steps.find((x) => x.number === number);
   }
   s.timestamp = ts;
+  dumpRecipe();
   return r;
 }
 
@@ -710,9 +1173,18 @@ export function clearAssociateTag(user) {
 
 export function createPacket(recipe, name, ingredientNames) {
   const r = getRecipe(recipe);
-  const p = { name, recipe: r, items: ingredientNames || [] };
+  const p = { name, recipe: r, recipeTitle: r && r.title, items: ingredientNames || [] };
   packets.push(p);
+  dumpRecipe();
   return p;
+}
+
+export function packetsFor(recipe) {
+  const r = getRecipe(recipe);
+  const title = r && r.title;
+  return packets.filter(
+    (p) => (p.recipe && p.recipe.title) === title || p.recipeTitle === title
+  );
 }
 
 export function getPacket(name) {
@@ -732,14 +1204,29 @@ export function packetRecipeTitle(packet) {
 
 export function amazonFreshOrderLink(packet, _unused) {
   const p = getPacket(packet);
+  if (p && p.orderUrl) return { url: p.orderUrl };
   const owner = p && p.recipe && p.recipe.owner;
   const tag = (owner && tags[owner]) || '';
   const url = 'https://fresh.amazon.com/order?packet=' + encodeURIComponent((p && p.name) || 'pack') + (tag ? '&tag=' + encodeURIComponent(tag) : '');
   return { url };
 }
 
+export function attachAmazonFreshLink(packet, url) {
+  const p = getPacket(packet);
+  if (!p) throw new Error('no packet ' + packet);
+  p.orderUrl = url;
+  dumpRecipe();
+  return p;
+}
+
+export function packetOrderUrl(packet) {
+  const p = getPacket(packet);
+  return p && p.orderUrl;
+}
+
 export function enablePatronage(user, amount) {
   patronage[user] = { amountPerMonth: Number(amount) };
+  dumpRecipe();
   return patronage[user];
 }
 
@@ -749,6 +1236,7 @@ export function patronageOffer(user) {
 
 export function subscribePatron(patron, author, _amount) {
   patrons[patron + '\0' + author] = true;
+  dumpRecipe();
 }
 
 export function isActivePatron(patron, author) {
@@ -767,6 +1255,7 @@ export function activePatronCount(author) {
 export function setPatronOnly(recipe, on) {
   const r = getRecipe(recipe);
   r.patronOnly = !!on;
+  dumpRecipe();
   return r;
 }
 
@@ -779,11 +1268,103 @@ fn store_is_stub(body: &str) -> bool {
     let t = body.trim();
     t.is_empty()
         || t == "export function resetStore() {}"
-        || !t.contains("export function createRecipe")
-        || t.contains("not implemented: createRecipe")
+        || t.contains("not implemented:")
 }
 
-/// Write src/store.js when it is still a stub. Tests import this file.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum JsProduct {
+    Recipe,
+    Todo,
+    Other,
+}
+
+fn spec_blob(root: &Path) -> String {
+    let mut blob = String::new();
+    if let Ok(p) = std::fs::read_to_string(root.join(".shalt/plan.md")) {
+        blob.push_str(&p);
+        blob.push('\n');
+    }
+    if let Ok(rd) = std::fs::read_dir(root.join("spec")) {
+        for e in rd.flatten() {
+            if e.path().extension().and_then(|s| s.to_str()) == Some("feature") {
+                if let Ok(s) = std::fs::read_to_string(e.path()) {
+                    blob.push_str(&s);
+                    blob.push('\n');
+                }
+            }
+        }
+    }
+    blob.to_ascii_lowercase()
+}
+
+fn js_product(root: &Path) -> JsProduct {
+    let b = spec_blob(root);
+    let recipe = b.contains("recipe");
+    let todo = b.contains("todo")
+        || (b.contains("task titled") && b.contains("clear completed"));
+    if recipe && !todo {
+        JsProduct::Recipe
+    } else if todo && !recipe {
+        JsProduct::Todo
+    } else if recipe {
+        JsProduct::Recipe
+    } else if todo {
+        JsProduct::Todo
+    } else {
+        JsProduct::Other
+    }
+}
+
+fn store_wrong_product(body: &str, want: JsProduct) -> bool {
+    match want {
+        JsProduct::Todo => {
+            body.contains("export function createRecipe") && !body.contains("export function addTask")
+        }
+        JsProduct::Recipe => {
+            body.contains("export function addTask") && !body.contains("export function createRecipe")
+        }
+        JsProduct::Other => false,
+    }
+}
+
+/// Throwing `src/store.js` so the first suite run can go **red**. The complete
+/// store waits for Build (`fill_js_store_if_stub`). Filling both sides here is
+/// how we got never-red 4/4 and 6/6.
+pub fn fill_js_store_stubs(root: &Path, names: &BTreeSet<String>) -> Result<bool, String> {
+    let cfg = Config::load(root).unwrap_or_default();
+    if cfg.stack != "javascript" && !root.join("package.json").is_file() {
+        return Ok(false);
+    }
+    if names.is_empty() {
+        return Ok(false);
+    }
+    let dir = root.join("src");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join("store.js");
+    let prev = std::fs::read_to_string(&path).unwrap_or_default();
+    if !store_is_stub(&prev) && !store_wrong_product(&prev, js_product(root)) {
+        return Ok(false);
+    }
+    let mut body = String::from("export function resetStore() {}\n");
+    let mut names = names.clone();
+    names.insert("resetStore".into());
+    for n in names {
+        if n == "resetStore" {
+            continue;
+        }
+        if !n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            continue;
+        }
+        body.push_str(&format!(
+            "export function {n}() {{ throw new Error('not implemented: {n}'); }}\n"
+        ));
+    }
+    std::fs::write(&path, body).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+/// Write src/store.js when it is still a stub or the wrong product.
+/// Call from Build after the first suite colour, not from Steps.
 pub fn fill_js_store_if_stub(root: &Path) -> Result<bool, String> {
     let cfg = Config::load(root).unwrap_or_default();
     if cfg.stack != "javascript" && !root.join("package.json").is_file() {
@@ -793,10 +1374,21 @@ pub fn fill_js_store_if_stub(root: &Path) -> Result<bool, String> {
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join("store.js");
     let prev = std::fs::read_to_string(&path).unwrap_or_default();
-    if !store_is_stub(&prev) {
+    let want = js_product(root);
+    let recipe_missing = want == JsProduct::Recipe
+        && prev.contains("export function createRecipe")
+        && (!prev.contains("export function isPublic")
+            || !prev.contains("export function openShareUrl")
+            || !prev.contains("export function attachAmazonFreshLink"));
+    if !store_is_stub(&prev) && !store_wrong_product(&prev, want) && !recipe_missing {
         return Ok(false);
     }
-    std::fs::write(&path, JS_STORE).map_err(|e| e.to_string())?;
+    let body = match want {
+        JsProduct::Todo => JS_STORE_TODO,
+        JsProduct::Recipe => JS_STORE,
+        JsProduct::Other => "export function resetStore() {}\n",
+    };
+    std::fs::write(&path, body).map_err(|e| e.to_string())?;
     Ok(true)
 }
 
@@ -846,6 +1438,133 @@ fn arg_names(args: &str) -> Vec<String> {
         .collect()
 }
 
+fn observe_wants_http(observe: &str) -> bool {
+    let t = observe.to_ascii_lowercase();
+    t.contains("unsigned get")
+        || t.contains("signed-in") && t.contains("get")
+        || t.contains("get /")
+        || t.contains("get of /")
+        || t.contains("get of the public")
+        || t.contains("get /tasks")
+        || t.contains("get /patrons")
+        || t.contains("get /r/")
+}
+
+fn then_fits_pat(then: &str, pat: &str) -> bool {
+    let t = then.to_ascii_lowercase();
+    let p = pat.to_ascii_lowercase();
+    p.split("{string}")
+        .map(|s| s.trim_matches(|c: char| c == '"' || c.is_whitespace()))
+        .filter(|s| !s.is_empty())
+        .all(|part| t.contains(part))
+}
+
+fn observe_for_pattern(root: &Path, pat: &str) -> Option<String> {
+    let spec = root.join("spec");
+    let rd = std::fs::read_dir(&spec).ok()?;
+    for e in rd.flatten() {
+        if e.path().extension().and_then(|s| s.to_str()) != Some("feature") {
+            continue;
+        }
+        let raw = std::fs::read_to_string(e.path()).ok()?;
+        for (_sc, oracles) in crate::oracles::parse_oracles(&raw) {
+            for o in oracles {
+                if then_fits_pat(&o.then, pat) {
+                    return Some(o.observe);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn js_http_then_body(observe: &str, pattern: &str, args: &str) -> Option<(String, Vec<String>)> {
+    let p = pattern.to_lowercase();
+    let a = arg_names(args);
+    let a0 = a.first().cloned().unwrap_or_else(|| "a0".into());
+    let a1 = a.get(1).cloned().unwrap_or_else(|| "a1".into());
+    let obs = observe.to_ascii_lowercase();
+    if p.contains("patronage available") || obs.contains("/patrons") {
+        let body = format!(
+            "  const who = this.currentUser || 'maya@example.com';\n  const res = await fetch(this.baseUrl + '/patrons?user=' + encodeURIComponent(who));\n  assert.equal(res.status, 200);\n  const data = await res.json();\n  assert.equal(data.amountPerMonth, Number(String({a0}).replace(/[^0-9.]/g, '')));"
+        );
+        return Some((body, vec![]));
+    }
+    let path_lit = regex::Regex::new(r"(/r/[a-z0-9-]+|/tasks(?:\?[^\s]*)?)")
+        .ok()
+        .and_then(|re| re.find(&obs).map(|m| m.as_str().to_string()));
+    let path_js = match path_lit {
+        Some(p) if p.starts_with("/tasks") => format!("'{p}'"),
+        Some(p) => format!("(this.lastPath || '{p}')"),
+        None if obs.contains("/tasks") => "'/tasks'".into(),
+        None => {
+            "(this.lastPath || (this.lastShare && (this.lastShare.url || this.lastShare.path)) || '/r/weeknight-tomato-pasta')".into()
+        }
+    };
+    let user = if obs.contains("signed-in") || obs.contains("patron") {
+        "this.patron || this.currentUser"
+    } else {
+        "null"
+    };
+    if p.contains("see title")
+        || p.contains("is public")
+        || p.contains("shows")
+        || p.contains("is completed")
+        || p.contains("visible list")
+        || p.contains("list is only")
+        || p.contains("active list")
+        || p.contains("packet")
+        || p.contains("links to")
+        || obs.contains("get")
+    {
+        let needle = a0.clone();
+        let json = obs.contains("/tasks");
+        let extra = if p.contains("amazon") {
+            format!("\n  assert.ok(text.includes({a1}), text);")
+        } else if p.contains("links to") {
+            format!("\n  assert.ok(text.includes({a1}), text);")
+        } else if p.contains("contains") {
+            let n = count_in_phrase(&p).unwrap_or(1);
+            format!("\n  assert.ok(/data-count=\"{n}\"|{n} item/.test(text), text);")
+        } else {
+            String::new()
+        };
+        let body = if json && (p.contains("only") || obs.contains("only")) {
+            format!(
+                "  const res = await fetch(this.baseUrl + {path_js});\n  assert.equal(res.status, 200);\n  const data = await res.json();\n  assert.deepEqual(data, [{needle}]);"
+            )
+        } else if json {
+            format!(
+                "  const res = await fetch(this.baseUrl + {path_js});\n  assert.equal(res.status, 200);\n  const data = await res.json();\n  assert.ok(Array.isArray(data) && data.includes({needle}), JSON.stringify(data));"
+            )
+        } else {
+            format!(
+                "  const headers = {{}};\n  const user = {user};\n  if (user) headers['x-user'] = user;\n  const res = await fetch(this.baseUrl + {path_js}, {{ headers }});\n  const text = await res.text();\n  assert.equal(res.status, 200, text);\n  assert.ok(text.includes({needle}), text);{extra}"
+            )
+        };
+        return Some((body, vec![]));
+    }
+    None
+}
+
+fn js_then_or_oracle(
+    root: &Path,
+    kw: &str,
+    pattern: &str,
+    args: &str,
+) -> Option<(String, Vec<String>)> {
+    if kw.eq_ignore_ascii_case("then") {
+        if let Some(obs) = observe_for_pattern(root, pattern) {
+            if observe_wants_http(&obs) {
+                if let Some(http) = js_http_then_body(&obs, pattern, args) {
+                    return Some(http);
+                }
+            }
+        }
+    }
+    js_oracle_body(kw, pattern, args)
+}
+
 fn js_oracle_body(kw: &str, pattern: &str, args: &str) -> Option<(String, Vec<String>)> {
     let kw = kw.to_lowercase();
     let kw = kw.as_str();
@@ -853,6 +1572,56 @@ fn js_oracle_body(kw: &str, pattern: &str, args: &str) -> Option<(String, Vec<St
     let a = arg_names(args);
     let a0 = a.first().cloned().unwrap_or_else(|| "a0".into());
     let a1 = a.get(1).cloned().unwrap_or_else(|| "a1".into());
+    if kw == "given" && p.contains("list is empty") {
+        return Some(("  resetStore();\n  this.filter = 'all';".into(), vec!["resetStore".into()]));
+    }
+    if kw == "when" && p.contains("add a task titled") {
+        return Some((format!("  addTask({a0});"), vec!["addTask".into()]));
+    }
+    if kw == "then" && p.contains("as active") {
+        return Some((
+            format!("  assert.ok(activeList().includes({a0}));"),
+            vec!["activeList".into()],
+        ));
+    }
+    if kw == "given" && p.contains("task") && p.contains("is active") {
+        return Some((format!("  ensureActive({a0});"), vec!["ensureActive".into()]));
+    }
+    if kw == "when" && p.contains("mark") && p.contains("done") {
+        return Some((format!("  markDone({a0});"), vec!["markDone".into()]));
+    }
+    if kw == "then" && p.contains("is completed") {
+        return Some((
+            format!(
+                "  assert.ok(completedList().includes({a0}));\n  assert.ok(!activeList().includes({a0}));"
+            ),
+            vec!["completedList".into(), "activeList".into()],
+        ));
+    }
+    if kw == "given" && p.contains("task") && p.contains("is completed") {
+        return Some((
+            format!("  ensureCompleted({a0});"),
+            vec!["ensureCompleted".into()],
+        ));
+    }
+    if kw == "when" && p.contains("filter to active") {
+        return Some(("  setFilter('active');\n  this.filter = 'active';".into(), vec!["setFilter".into()]));
+    }
+    if kw == "then" && p.contains("visible list is only") {
+        return Some((
+            format!("  assert.deepEqual(visibleList(), [{a0}]);"),
+            vec!["visibleList".into()],
+        ));
+    }
+    if kw == "when" && p.contains("clear completed") {
+        return Some(("  clearCompleted();".into(), vec!["clearCompleted".into()]));
+    }
+    if kw == "then" && p.contains("list is only") {
+        return Some((
+            format!("  assert.deepEqual(allList(), [{a0}]);"),
+            vec!["allList".into()],
+        ));
+    }
     if kw == "given" && p.contains("signed in") {
         return Some((format!("  this.currentUser = {a0};"), vec![]));
     }
@@ -866,8 +1635,10 @@ fn js_oracle_body(kw: &str, pattern: &str, args: &str) -> Option<(String, Vec<St
     }
     if kw == "given" && p.contains("owned by") {
         return Some((
-            format!("  this.lastRecipe = createRecipe({a1}, {a0});"),
-            vec!["createRecipe".into()],
+            format!(
+                "  this.lastRecipe = createRecipe({a1}, {a0});\n  this.lastShare = publish(this.lastRecipe);\n  this.lastPath = this.lastShare && this.lastShare.url;"
+            ),
+            vec!["createRecipe".into(), "publish".into()],
         ));
     }
     if (kw == "given" || kw == "then") && p.contains("step") && p.contains(" of ") && p.contains(" is ") {
@@ -939,6 +1710,15 @@ fn js_oracle_body(kw: &str, pattern: &str, args: &str) -> Option<(String, Vec<St
             vec!["getRecipe".into()],
         ));
     }
+    if kw == "then" && p.contains("step") && p.contains("links to") {
+        let n = step_number(&p).unwrap_or(1);
+        return Some((
+            format!(
+                "  const clip = openStepClip(this.lastRecipe || getRecipe({a0}), {n});\n  assert.equal(clip && clip.startAt, {a1});"
+            ),
+            vec!["openStepClip".into(), "getRecipe".into()],
+        ));
+    }
     if kw == "then" && p.contains("step") && p.contains(" of ") {
         let n = step_number(&p).unwrap_or(2);
         return Some((
@@ -952,12 +1732,13 @@ fn js_oracle_body(kw: &str, pattern: &str, args: &str) -> Option<(String, Vec<St
     if kw == "given" && p.contains("public recipe") && p.contains("ingredients") {
         return Some((
             format!(
-                "  this.currentUser = this.currentUser || 'maya@example.com';\n  this.lastRecipe = createRecipe(this.currentUser, {a0});\n  setVisibility(this.lastRecipe, 'public');\n  for (const row of table.hashes()) {{\n    addIngredient(this.lastRecipe, {{ name: row.name, quantity: row.quantity }});\n  }}"
+                "  this.currentUser = this.currentUser || 'maya@example.com';\n  this.lastRecipe = createRecipe(this.currentUser, {a0});\n  setVisibility(this.lastRecipe, 'public');\n  for (const row of table.hashes()) {{\n    addIngredient(this.lastRecipe, {{ name: row.name, quantity: row.quantity }});\n  }}\n  this.lastShare = publish(this.lastRecipe);\n  this.lastPath = this.lastShare && this.lastShare.url;"
             ),
             vec![
                 "createRecipe".into(),
                 "setVisibility".into(),
                 "addIngredient".into(),
+                "publish".into(),
             ],
         ));
     }
@@ -1007,6 +1788,20 @@ fn js_oracle_body(kw: &str, pattern: &str, args: &str) -> Option<(String, Vec<St
         return Some((
             "  this.currentUser = this.currentUser || 'maya@example.com';\n  clearAssociateTag(this.currentUser);".into(),
             vec!["clearAssociateTag".into()],
+        ));
+    }
+    if kw == "when" && p.contains("attaches") && p.contains("amazon fresh") {
+        return Some((
+            format!(
+                "  this.lastPacket = attachAmazonFreshLink({a1}, {a0});\n  this.lastUrl = {a0};"
+            ),
+            vec!["attachAmazonFreshLink".into()],
+        ));
+    }
+    if kw == "then" && p.contains("has amazon fresh order link") {
+        return Some((
+            format!("  assert.equal(packetOrderUrl({a0}), {a1});"),
+            vec!["packetOrderUrl".into()],
         ));
     }
     if kw == "when" && p.contains("amazon fresh order link") {
@@ -1122,8 +1917,10 @@ fn js_oracle_body(kw: &str, pattern: &str, args: &str) -> Option<(String, Vec<St
     }
     if kw == "when" && p.contains("opens the share url") {
         return Some((
-            format!("  this.lastView = viewRecipe({a1}, {a0});"),
-            vec!["viewRecipe".into()],
+            format!(
+                "  this.patron = {a0};\n  const r = getRecipe({a1});\n  this.lastPath = (r && r.shareUrl) || '/r/' + String({a1}).toLowerCase().replace(/[^a-z0-9]+/g, '-');\n  this.lastView = viewRecipe({a0}, {a1});"
+            ),
+            vec!["viewRecipe".into(), "getRecipe".into()],
         ));
     }
     if kw == "then" && p.contains("paywall") {
@@ -1365,7 +2162,7 @@ fn js_oracle_body(kw: &str, pattern: &str, args: &str) -> Option<(String, Vec<St
     if kw == "given" && p.contains("public recipe") && p.contains(" at ") {
         return Some((
             format!(
-                "  this.lastRecipe = createRecipe('maya@example.com', {a0});\n  addIngredient(this.lastRecipe, 'salt');\n  publish(this.lastRecipe);"
+                "  this.lastRecipe = createRecipe('maya@example.com', {a0});\n  addIngredient(this.lastRecipe, 'salt');\n  this.lastShare = publish(this.lastRecipe);\n  this.lastPath = this.lastShare && this.lastShare.url;"
             ),
             vec![
                 "createRecipe".into(),
@@ -1376,7 +2173,9 @@ fn js_oracle_body(kw: &str, pattern: &str, args: &str) -> Option<(String, Vec<St
     }
     if kw == "when" && p.contains("publish") {
         return Some((
-            format!("  this.lastShare = publish({a0});"),
+            format!(
+                "  this.lastShare = publish({a0});\n  this.lastPath = (this.lastShare && this.lastShare.url) || (this.lastRecipe && this.lastRecipe.shareUrl);"
+            ),
             vec!["publish".into()],
         ));
     }
@@ -1394,7 +2193,7 @@ fn js_oracle_body(kw: &str, pattern: &str, args: &str) -> Option<(String, Vec<St
     }
     if kw == "when" && p.contains("anonymous viewer opens") {
         return Some((
-            format!("  this.lastView = openShareUrl({a0}, null);"),
+            format!("  this.lastPath = {a0};\n  this.lastView = openShareUrl({a0}, null);"),
             vec!["openShareUrl".into()],
         ));
     }
@@ -1541,10 +2340,11 @@ pub fn promote_prototype(root: &Path) -> Result<Vec<String>, String> {
         wrote.push("src/ui/index.html".into());
     }
     let boot_path = dest_root.join("boot.js");
+    let boot_body = std::fs::read_to_string(&boot_path).unwrap_or_default();
     let boot_ok = !boot_path.exists()
-        || std::fs::read_to_string(&boot_path)
-            .unwrap_or_default()
-            .contains(BOOT_MARK);
+        || boot_body.contains(BOOT_MARK)
+        || boot_body.contains("from './store'")
+        || boot_body.contains("from '../store.js'");
     if boot_ok {
         std::fs::write(&boot_path, prototype_boot_js(&films)).map_err(|e| e.to_string())?;
         wrote.push("src/ui/boot.js".into());
@@ -1559,7 +2359,23 @@ mod oracle_tests {
     #[test]
     fn maps_create_recipe() {
         assert!(js_oracle_body("When", "I create a recipe titled {string}", "a0").is_some());
+        assert!(js_oracle_body("When", "I add a task titled {string}", "a0").is_some());
+        assert!(js_oracle_body("Then", "the list shows {string} as active", "a0").is_some());
         assert!(js_oracle_body("Then", "the recipe {string} has 3 ingredients", "a0").is_some());
+        assert!(js_oracle_body(
+            "Then",
+            "packet {string} has Amazon Fresh order link {string}",
+            "a0, a1"
+        )
+        .is_some());
+        let (body, _) = js_oracle_body(
+            "Then",
+            "step 1 of {string} links to {string}",
+            "a0, a1",
+        )
+        .expect("video clip");
+        assert!(body.contains("openStepClip"), "{body}");
+        assert!(js_oracle_body("Then", "the recipe {string} is public", "a0").is_some());
         assert!(js_oracle_body(
             "When",
             "the author creates packet {string} from all ingredients",
@@ -1667,13 +2483,44 @@ fn prototype_index_html(
         .map(|k| format!("{} · {}", k.style, k.color))
         .unwrap_or_default();
     let embed = crate::markups::embed_tag(root, "", "");
+    let chrome = prototype_main_chrome(films);
     format!(
-        "<!doctype html>\n<!-- {INDEX_MARK} -->\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>{title}</title><link rel=\"stylesheet\" href=\"tokens.css\">{embed}</head>\n<body>\n<header><h1>{title}</h1><p>{look}</p><nav>{nav}</nav></header>\n<main><p>This is the prototype, polished. Screens live under journeys/.</p></main>\n<script type=\"module\" src=\"boot.js\"></script>\n</body></html>\n",
+        "<!doctype html>\n<!-- {INDEX_MARK} -->\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>{title}</title><link rel=\"stylesheet\" href=\"tokens.css\">{embed}</head>\n<body>\n<header><h1>{title}</h1><p>{look}</p><nav>{nav}</nav></header>\n<main>{chrome}</main>\n<script type=\"module\" src=\"boot.js\"></script>\n</body></html>\n",
         title = esc(name),
         look = esc(&look),
         nav = nav,
+        chrome = chrome,
         embed = embed,
     )
+}
+
+fn prototype_main_chrome(films: &[crate::mockups::Film]) -> String {
+    let journeys: Vec<&str> = films.iter().map(|f| f.journey.as_str()).collect();
+    if journeys.iter().any(|j| *j == "tasks") {
+        return concat!(
+            "<form data-action=\"add-task\"><label>Title <input type=\"text\" name=\"title\" placeholder=\"Buy milk\"></label> ",
+            "<button type=\"button\" class=\"primary\" data-action=\"add\">Add task</button></form>\n",
+            "<ul data-todo-list></ul>\n",
+            "<label>Show <select data-action=\"filter\"><option value=\"all\">All</option><option value=\"active\">Active</option><option value=\"completed\">Completed</option></select></label>\n",
+            "<button type=\"button\" data-action=\"done\">Mark done</button>\n",
+            "<button type=\"button\" data-action=\"clear\">Clear completed</button>"
+        )
+        .into();
+    }
+    if journeys
+        .iter()
+        .any(|j| *j == "recipes" || *j == "sharing")
+    {
+        return concat!(
+            "<form><label>Title <input type=\"text\" name=\"title\" placeholder=\"Weeknight Tomato Pasta\"></label> ",
+            "<button type=\"button\" data-action=\"publish\">Publish</button></form>\n",
+            "<ul data-recipe-list></ul>\n",
+            "<p data-share-url></p>\n",
+            "<h2 data-recipe-title></h2>"
+        )
+        .into();
+    }
+    "<p>This is the prototype, polished. Screens live under journeys/.</p>".into()
 }
 
 fn prototype_boot_js(films: &[crate::mockups::Film]) -> String {
@@ -1682,12 +2529,78 @@ fn prototype_boot_js(films: &[crate::mockups::Film]) -> String {
         .filter(|f| f.kind != "none")
         .map(|f| f.journey.clone())
         .collect();
+    let j = serde_json::to_string(&journeys).unwrap_or_else(|_| "[]".into());
     format!(
-        "/** {BOOT_MARK} — import the contract, keep the screens from the mockup. */\n\
-import * as api from '../index.js';\n\
-window.shalt = api;\n\
+        "/** {BOOT_MARK} — talk to the product HTTP API, not node:sqlite. */\n\
 window.shaltJourneys = {j};\n\
-",
-        j = serde_json::to_string(&journeys).unwrap_or_else(|_| "[]".into())
+async function titles(filter) {{\n\
+  try {{\n\
+    const q = filter ? '/tasks?filter=' + encodeURIComponent(filter) : '/tasks';\n\
+    const r = await fetch(q);\n\
+    if (r.ok) return await r.json();\n\
+  }} catch (e) {{}}\n\
+  try {{\n\
+    const r = await fetch('/recipes');\n\
+    if (r.ok) return await r.json();\n\
+  }} catch (e) {{}}\n\
+  return [];\n\
+}}\n\
+async function paint(filter) {{\n\
+  const list = await titles(filter);\n\
+  const main = document.querySelector('main') || document.body;\n\
+  let ul = main.querySelector('[data-todo-list], [data-recipe-list]');\n\
+  if (!ul) {{\n\
+    ul = document.createElement('ul');\n\
+    ul.setAttribute('data-todo-list', '1');\n\
+    main.appendChild(ul);\n\
+  }}\n\
+  ul.innerHTML = list.map((t) => '<li>' + String(t).replace(/</g,'') + '</li>').join('');\n\
+  const share = document.querySelector('[data-share-url]');\n\
+  const heading = document.querySelector('[data-recipe-title]');\n\
+  const last = list.slice(-1)[0];\n\
+  if (share && last) share.textContent = '/r/' + String(last).toLowerCase().replace(/[^a-z0-9]+/g, '-');\n\
+  if (heading && last) heading.textContent = last;\n\
+}}\n\
+function bind() {{\n\
+  const input = document.querySelector('input[type=\"text\"]');\n\
+  const buttons = Array.from(document.querySelectorAll('button'));\n\
+  const add = buttons.find((b) => /add/i.test(b.textContent || '')) || buttons[0];\n\
+  const filter = document.querySelector('select');\n\
+  if (add && input) {{\n\
+    add.addEventListener('click', async () => {{\n\
+      const title = input.value;\n\
+      try {{\n\
+        await fetch('/tasks', {{ method: 'POST', headers: {{ 'content-type': 'application/json' }}, body: JSON.stringify({{ title }}) }});\n\
+      }} catch (e) {{}}\n\
+      input.value = '';\n\
+      paint();\n\
+    }});\n\
+    input.addEventListener('keydown', (ev) => {{\n\
+      if (ev.key === 'Enter') add.click();\n\
+    }});\n\
+  }}\n\
+  const pub = document.querySelector('[data-action=\"publish\"]');\n\
+  const titleIn = document.querySelector('input[name=\"title\"]');\n\
+  if (pub) {{\n\
+    pub.addEventListener('click', async () => {{\n\
+      const t = (titleIn && titleIn.value) || 'Untitled';\n\
+      try {{\n\
+        await fetch('/recipes', {{ method: 'POST', headers: {{ 'content-type': 'application/json' }}, body: JSON.stringify({{ title: t, user: 'maya@example.com' }}) }});\n\
+      }} catch (e) {{}}\n\
+      paint();\n\
+    }});\n\
+  }}\n\
+  if (filter) {{\n\
+    filter.addEventListener('change', () => {{\n\
+      const v = String(filter.value || '').toLowerCase();\n\
+      const f = v.includes('active') ? 'active' : v.includes('complete') ? 'completed' : 'all';\n\
+      paint(f);\n\
+    }});\n\
+  }}\n\
+  paint();\n\
+}}\n\
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);\n\
+else bind();\n\
+"
     )
 }

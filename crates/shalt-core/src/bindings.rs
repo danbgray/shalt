@@ -245,7 +245,11 @@ fn body_is_stub(lines: &[&str], start: usize) -> bool {
         return true;
     }
     let compact: String = chunk.chars().filter(|c| !c.is_whitespace()).collect();
-    compact.contains("{}") || compact.contains("{...}")
+    // `const headers = {}` is a real body. Only an empty function is a stub.
+    compact == "{}"
+        || compact == "{...}"
+        || compact == "=>{}"
+        || compact.ends_with("=>{};")
 }
 
 /// Parse cucumber-family step definitions from a source file.

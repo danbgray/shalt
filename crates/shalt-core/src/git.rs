@@ -74,7 +74,7 @@ mod tests {
     #[test]
     fn github_https_and_ssh_names() {
         assert_eq!(
-            github_clone_name("https://github.com/rivletio/shalt.git").as_deref(),
+            github_clone_name("https://github.com/danbgray/shalt.git").as_deref(),
             Some("shalt")
         );
         assert_eq!(

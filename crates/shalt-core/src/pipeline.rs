@@ -257,7 +257,6 @@ fn hop_write_after_fail(
         return None;
     }
     crate::alloc::pick_escalate_model_filtered(&write_chain_installed(), &last.model, true)
-        .or_else(|| Some((last.backend.clone(), last.model.clone())))
 }
 
 fn write_chain_installed() -> Vec<String> {
@@ -352,12 +351,27 @@ pub fn continue_project(project_id: &str) -> Result<Option<Job>, String> {
         return Ok(None);
     }
     let stage = next_stage(&root);
-    if matches!(stage, Stage::Steps | Stage::Build | Stage::Run) {
-        let _ = ensure_play_lock(&root)?;
+    if matches!(
+        stage,
+        Stage::Design | Stage::Ux | Stage::Steps | Stage::Build | Stage::Run
+    ) {
+        ensure_play_lock(&root)?;
     }
-    let stage = next_stage(&root);
+    let mut stage = next_stage(&root);
     let mut board = Board::load(&root.join(".shalt/board.json"));
     let features = load_specs(&root.join("spec"), false).unwrap_or_default();
+    if stage == Stage::Design
+        && hop_write_after_fail(&q, project_id, JobKind::Design).is_none()
+    {
+        if q.jobs.iter().rev().any(|j| {
+            j.project_id == project_id
+                && j.kind == JobKind::Design
+                && matches!(j.status, JobStatus::Failed | JobStatus::Interrupted)
+        }) {
+            let _ = crate::mockups::seed_undrawn_films(&root, &features);
+            stage = next_stage(&root);
+        }
+    }
     board.sync_new_rids(&features);
     board.sync_epics(&features);
     let mut led = Ledger::load(&root.join(".shalt/ledger.json")).unwrap_or_default();
@@ -697,7 +711,12 @@ pub fn execute_job(job_id: &str) -> Result<String, String> {
         .ok_or_else(|| format!("no job {job_id}"))?;
     match job.kind {
         JobKind::Author => execute_author(job_id),
-        JobKind::Design => crate::compose::execute_design(job_id),
+        JobKind::Design => {
+            if let Some(p) = Org::load().get(&job.project_id) {
+                ensure_play_lock(&PathBuf::from(&p.path))?;
+            }
+            crate::compose::execute_design(job_id)
+        }
         JobKind::Steps => execute_steps(job_id),
         JobKind::Build => execute_build(job_id, 6),
         JobKind::Run => execute_run(job_id),
@@ -901,6 +920,7 @@ fn execute_steps(job_id: &str) -> Result<String, String> {
         );
     }
     let _ = crate::scaffold::write_js_world_if_missing(&root);
+    let _ = crate::scaffold::fill_js_server(&root, false);
     let stubbed = crate::scaffold::apply_step_stubs(&root, &journey).unwrap_or_default();
     if !stubbed.is_empty() {
         q.append(job_id, &format!("stubbed {}", stubbed.join(", ")));
@@ -941,6 +961,21 @@ fn execute_steps(job_id: &str) -> Result<String, String> {
     let defs_now = crate::bindings::load_step_defs(&root);
     let bound_now = crate::bindings::bound_count(&features, &defs_now, &journey);
     let seeded_oracles = bound_now > bound_before;
+    if crate::bindings::first_unbound(&features, &journey, &defs_now).is_none() {
+        let stubs = crate::scaffold::apply_js_contract_stubs(&root).unwrap_or_default();
+        let extra = if stubs.is_empty() {
+            String::new()
+        } else {
+            format!("; stubbed {}", stubs.join(", "))
+        };
+        return finish_ok_with(
+            job_id,
+            &format!(
+                "bound {bound_now} scenarios in `{journey}` (already bound); writer skipped{extra}"
+            ),
+            "",
+        );
+    }
     let review = if seeded_oracles {
         "Oracles were seeded from src/. Review them. Override any that aren't real oracles. Keep signatures. Then done()."
     } else {
@@ -990,6 +1025,23 @@ fn execute_steps(job_id: &str) -> Result<String, String> {
                         );
                         continue;
                     }
+                    if seeded_oracles {
+                        let defs = crate::bindings::load_step_defs(&root);
+                        let still =
+                            crate::bindings::bound_count(&features, &defs, &journey);
+                        if still > bound_before {
+                            let mut q = JobQueue::load();
+                            q.append(
+                                job_id,
+                                "writer dump ignored — seeded oracles still bind",
+                            );
+                            let _ = q.save();
+                            bound_after = still;
+                            wrote = vec![target.clone()];
+                            transcript = res.transcript;
+                            break;
+                        }
+                    }
                     return finish_err(job_id, "stepwright write did not parse");
                 }
                 let defs_after = crate::bindings::load_step_defs(&root);
@@ -1008,6 +1060,26 @@ fn execute_steps(job_id: &str) -> Result<String, String> {
                             ),
                         );
                         continue;
+                    }
+                    if seeded_oracles {
+                        if let Some(prev) = &backup {
+                            let _ = std::fs::write(root.join(&target), prev);
+                        }
+                        let defs = crate::bindings::load_step_defs(&root);
+                        let still =
+                            crate::bindings::bound_count(&features, &defs, &journey);
+                        if still > bound_before {
+                            let mut q = JobQueue::load();
+                            q.append(
+                                job_id,
+                                "writer dump ignored — seeded oracles still bind",
+                            );
+                            let _ = q.save();
+                            bound_after = still;
+                            wrote = vec![target.clone()];
+                            transcript = res.transcript;
+                            break;
+                        }
                     }
                     return finish_err(
                         job_id,
@@ -1045,6 +1117,19 @@ fn execute_steps(job_id: &str) -> Result<String, String> {
                         &format!("Previous pass was rejected: {e}. Fill bodies in `{target}` only."),
                     );
                     continue;
+                }
+                let _ = crate::scaffold::fill_all_js_pending_oracles(&root);
+                let defs = crate::bindings::load_step_defs(&root);
+                if crate::bindings::first_unbound(&features, &journey, &defs).is_none() {
+                    let mut q = JobQueue::load();
+                    q.append(
+                        job_id,
+                        "writer zone dump ignored — seeded oracles still bind",
+                    );
+                    let _ = q.save();
+                    bound_after = crate::bindings::bound_count(&features, &defs, &journey);
+                    wrote = vec![target.clone()];
+                    break;
                 }
                 return finish_err(job_id, &e.to_string());
             }
@@ -1180,6 +1265,7 @@ fn execute_build(job_id: &str, max_turns: usize) -> Result<String, String> {
     let _ = crate::scaffold::apply_js_contract_stubs(&root);
     let _ = crate::scaffold::fill_all_js_pending_oracles(&root);
     let _ = crate::scaffold::fill_js_store_if_stub(&root);
+    let _ = crate::scaffold::fill_js_server(&root, true);
     let features = match load_specs(&root.join("spec"), false) {
         Ok(f) => f,
         Err(e) => return finish_err(job_id, &e.to_string()),

@@ -545,7 +545,7 @@ Feature: Recipe video timestamps
     And step 1 of "Weeknight Tomato Pasta" is "Boil water"
     When I tag step 1 at timestamp "00:00:12"
     Then step 1 of "Weeknight Tomato Pasta" links to "00:00:12"
-    #observe: opening the step clip starts at 00:00:12
+    #observe: GET /r/weeknight-tomato-pasta shows step 1 starting at 00:00:12
 "#,
             |p| p.contains("video") || p.contains("timestamp"),
         ),
@@ -561,11 +561,11 @@ Feature: Ingredient packets
     When the author creates packet "sauce" from all ingredients
     And the author attaches Amazon Fresh order link "https://fresh.amazon.com/sauce" to packet "sauce"
     Then packet "sauce" contains 1 items
-    #observe: packet sauce item count is 1
+    #observe: GET /r/weeknight-tomato-pasta includes packet sauce with 1 item
     And the packet is linked to recipe "Weeknight Tomato Pasta"
-    #observe: packet sauce names recipe Weeknight Tomato Pasta
+    #observe: GET /r/weeknight-tomato-pasta names recipe Weeknight Tomato Pasta
     And packet "sauce" has Amazon Fresh order link "https://fresh.amazon.com/sauce"
-    #observe: packet sauce order URL is the Amazon Fresh link https://fresh.amazon.com/sauce
+    #observe: GET /r/weeknight-tomato-pasta includes Amazon Fresh link https://fresh.amazon.com/sauce
 "#,
             |p| p.contains("amazon") || p.contains("packet") || p.contains("ingredient"),
         ),
@@ -577,7 +577,7 @@ Feature: Patron subscriptions
     Given I am signed in as "maya@example.com"
     When I enable patronage at "$5" per month
     Then my profile shows patronage available at "$5" per month
-    #observe: patronage offer for maya@example.com is $5 per month
+    #observe: GET /patrons?user=maya@example.com offers 5 per month
   Scenario: Patron opens a patron-only recipe
     Given "alex@example.com" offers patronage at "$5" per month
     And "sam@example.com" is an active patron of "alex@example.com"
@@ -596,24 +596,24 @@ Feature: Todo list
     Given the list is empty
     When I add a task titled "Buy milk"
     Then the list shows "Buy milk" as active
-    #observe: the active list contains Buy milk
+    #observe: GET /tasks?filter=active includes Buy milk
   Scenario: Mark a task done
     Given a task "Buy milk" is active
     When I mark "Buy milk" done
     Then "Buy milk" is completed
-    #observe: Buy milk is in the completed list and not in the active list
+    #observe: GET /tasks?filter=completed includes Buy milk
   Scenario: Filter active tasks
     Given a task "Buy milk" is completed
     And a task "Call Sam" is active
     When I filter to active
     Then the visible list is only "Call Sam"
-    #observe: the visible list is only Call Sam
+    #observe: GET /tasks?filter=active includes only Call Sam
   Scenario: Clear completed tasks
     Given a task "Buy milk" is completed
     And a task "Call Sam" is active
     When I clear completed
     Then the list is only "Call Sam"
-    #observe: completed is empty and Call Sam remains
+    #observe: GET /tasks includes Call Sam and omits Buy milk
 "#,
             |p| {
                 p.contains("todo")
@@ -658,6 +658,12 @@ mod spec_seed_tests {
         assert!(wrote.iter().any(|f| f.ends_with("video.feature")), "{wrote:?}");
         assert!(wrote.iter().any(|f| f.ends_with("packets.feature")), "{wrote:?}");
         assert!(wrote.iter().any(|f| f.ends_with("patrons.feature")), "{wrote:?}");
+        let packets = fs::read_to_string(t.path().join("spec/packets.feature")).unwrap();
+        assert!(packets.contains("GET /r/"), "{packets}");
+        let video = fs::read_to_string(t.path().join("spec/video.feature")).unwrap();
+        assert!(video.contains("GET /r/"), "{video}");
+        let patrons = fs::read_to_string(t.path().join("spec/patrons.feature")).unwrap();
+        assert!(patrons.contains("GET /patrons"), "{patrons}");
         assert!(spec_is_playable(t.path()));
         assert_eq!(seed_spec_from_plan(t.path(), plan).unwrap().len(), 0);
     }

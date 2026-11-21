@@ -122,7 +122,8 @@ fn designer_user_prompt_scoped(root: &Path, focus_rid: &str, focus_journey: &str
          Each journey needs mockups/journeys/<journey>/storyboard.json as {{\"journey\",\"kind\":\"ui\",\"spec_hash\":<hash below>,\"frames\":[{{\"rid\",\"file\":\"<journey>.html\",\"caption\"}}]}}. spec_hash must match. kind=none if no UI. Do not write mockups/storyboard.json or HTML at the mockups root.\n\
          Copy titles, emails, prices, URLs, and names from the spec. Do not invent replacements.\n\
          Do not restyle controls. No light text on buttons. tokens.sketch.css if missing is :root vars only (--paper, --ink, --accent). tokens.final.css waits for polish or Build — not this turn.\n\
-         Fill empty frames below. Do not rewrite drawn journeys. Do not list_files. Do not write spec/, tests, contract/, src/, or .shalt/. Call done() as soon as every empty beat is drawn.\n\n",
+         Fill empty frames below. Do not rewrite drawn journeys. Do not list_files. Do not write spec/, tests, contract/, src/, or .shalt/. Call done() as soon as every empty beat is drawn.\n\
+         A full <html> document, a <style> block, or Arial/Times is a dump — shalt will throw it away and seed the sketch.\n\n",
     );
     s.push_str(&crate::markups::designer_markup_prompt(root, focus_journey, focus_rid));
     match crate::mockups::load_kit(root) {
@@ -296,21 +297,42 @@ pub fn execute_design(job_id: &str) -> Result<String, String> {
                 last_transcript = res.transcript.clone();
                 let features = load_specs(&root.join("spec"), false).unwrap_or_default();
                 crate::mockups::refresh_thumbs(&root, &features);
-                if res.wrote.is_empty() && crate::mockups::design_needed(&root, &features) {
+                let mut wrote = res.wrote.clone();
+                let normalized =
+                    crate::mockups::normalize_design_dumps(&root, &features);
+                if !normalized.is_empty() {
+                    q.append(
+                        job_id,
+                        &format!("normalized dumps to sketch ({})", normalized.len()),
+                    );
+                    wrote.extend(normalized);
+                }
+                if wrote.is_empty() && crate::mockups::design_needed(&root, &features) {
                     if tries <= crate::alloc::WRITE_MODELS.len()
                         && hop_write_lane(&mut job, "design dump — next writer draws")
                     {
                         continue;
                     }
+                    let seeded = crate::mockups::seed_undrawn_films(&root, &features);
+                    if !seeded.is_empty() {
+                        q.append(
+                            job_id,
+                            &format!(
+                                "writers dumped — seeded {}",
+                                seeded.join(", ")
+                            ),
+                        );
+                        wrote = seeded;
+                    }
                 }
                 let promoted = crate::scaffold::promote_prototype(&root).unwrap_or_default();
                 let summary = if promoted.is_empty() {
-                    format!("wrote {}: {}", res.wrote.len(), res.wrote.join(", "))
+                    format!("wrote {}: {}", wrote.len(), wrote.join(", "))
                 } else {
                     format!(
                         "wrote {}: {}; prototype is the product ({})",
-                        res.wrote.len(),
-                        res.wrote.join(", "),
+                        wrote.len(),
+                        wrote.join(", "),
                         promoted.join(", ")
                     )
                 };
@@ -347,6 +369,24 @@ pub fn execute_design(job_id: &str) -> Result<String, String> {
                     && hop_write_lane(&mut job, "design stall — next writer draws")
                 {
                     continue;
+                }
+                let features = load_specs(&root.join("spec"), false).unwrap_or_default();
+                let seeded = crate::mockups::seed_undrawn_films(&root, &features);
+                if !seeded.is_empty() || !crate::mockups::design_needed(&root, &features) {
+                    q.append(
+                        job_id,
+                        &format!(
+                            "writers stalled — seeded {}",
+                            if seeded.is_empty() {
+                                "existing frames".into()
+                            } else {
+                                seeded.join(", ")
+                            }
+                        ),
+                    );
+                    q.set_status(job_id, JobStatus::Done);
+                    let _ = q.save();
+                    return Ok("seeded sketch after stall".into());
                 }
                 q.set_error(job_id, &short);
                 q.append(job_id, &format!("failed: {short}"));
@@ -701,6 +741,15 @@ pub fn backend_for_job(job: &Job) -> Result<OpenAICompatBackend, String> {
                     &format!("yolo: {}", crate::jobs::ask_short(question)),
                 );
                 let _ = q.save();
+                if kind == Some(JobKind::Design)
+                    && crate::mockups::looks_like_platform_question(question)
+                {
+                    let root = crate::org::Org::load()
+                        .get(&project_id)
+                        .map(|p| std::path::PathBuf::from(&p.path))
+                        .unwrap_or_default();
+                    let _ = crate::mockups::persist_kit_platform(&root, &a, true);
+                }
                 return Ok(a);
             }
             let root = crate::org::Org::load()

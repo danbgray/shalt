@@ -356,6 +356,7 @@ pub fn audit_in(root: Option<&Path>, ledger: &Ledger, features: &[Feature]) -> V
     if let Some(root) = root {
         let defs = crate::bindings::load_step_defs(root);
         problems.extend(crate::oracles::lint_then_defs(&defs));
+        problems.extend(crate::oracles::lint_http_observe(&defs, features));
     }
     for (file, name) in duplicate_rids(features) {
         problems.push(format!("duplicate scenario id: {file} :: {name}"));

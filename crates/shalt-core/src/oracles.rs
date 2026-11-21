@@ -331,6 +331,7 @@ pub fn then_body_lint(body: &str, when_calls: &[String]) -> Option<String> {
     }) {
         return Some("Then has an || escape; a door that always opens is not a door".into());
     }
+    // HTTP #observe: is filled by js_http_then_body; this lint is the body only.
     let asserts = low.contains("assert.")
         || low.contains("assert!")
         || low.contains("assert_eq")
@@ -362,6 +363,51 @@ pub fn lint_then_defs(defs: &[crate::bindings::StepDef]) -> Vec<String> {
                 .join(" ");
             out.push(format!(
                 "acting Then '{}' — {why}: {excerpt}",
+                d.pattern
+            ));
+        }
+    }
+    out
+}
+
+fn then_fits_pat(then: &str, pat: &str) -> bool {
+    let t = then.to_ascii_lowercase();
+    let p = pat.to_ascii_lowercase();
+    p.split("{string}")
+        .map(|s| s.trim_matches(|c: char| c == '"' || c.is_whitespace()))
+        .filter(|s| !s.is_empty())
+        .all(|part| t.contains(part))
+}
+
+/// Then that ignores an HTTP #observe: is a store-shaped fake door.
+pub fn lint_http_observe(
+    defs: &[crate::bindings::StepDef],
+    features: &[crate::spec::Feature],
+) -> Vec<String> {
+    let mut observes: Vec<(String, String)> = Vec::new();
+    for f in features {
+        for s in &f.scenarios {
+            for o in &s.oracles {
+                observes.push((o.then.clone(), o.observe.clone()));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for d in defs.iter().filter(|d| d.kw == "then" && !d.stub) {
+        let Some((_, obs)) = observes
+            .iter()
+            .find(|(then, _)| then_fits_pat(then, &d.pattern))
+        else {
+            continue;
+        };
+        let ol = obs.to_ascii_lowercase();
+        let http = ol.contains("unsigned get")
+            || ol.contains("get /")
+            || ol.contains("get of /")
+            || (ol.contains("get") && ol.contains("share url"));
+        if http && !d.body.contains("fetch(") {
+            out.push(format!(
+                "Then '{}' ignores #observe: HTTP GET — fetch the URL, don't ask the store",
                 d.pattern
             ));
         }

@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-13
 **Status:** draft, awaiting review
-**Repo:** this repository, in place (`github.com/rivletio/shalt`)
+**Repo:** this repository, in place (`github.com/danbgray/shalt`)
 **Replaces:** the Python package `shalt` 0.1.0
 
 ## Goal

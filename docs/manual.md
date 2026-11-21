@@ -44,13 +44,13 @@ English → Feature/Scenario spec → storyboards → pick a language → bound 
 
 ![Projects](images/desk-inbox.png)
 
-*Two local projects. Envelope is paused on purpose. Recipe share is the fixture in `examples/recipe-share` (spec + wireframes).*
+*Three local projects. Envelope paused. Todo 4/4. Recipe share failed a zone write (stepwright → `src/`). Isolation held.*
 
 Play / Pause / Yolo / language live on the card. Forecast vs spent is measured tokens and time, not a human estimate.
 
 ![Plan](images/desk-plan.png)
 
-*Plan tab once a project is open. English interview at the top; Play uses it.*
+*Todo Plan after 4/4. Agent tiles with 0 tokens did not run — spend here is `qwen3:0.6b`.*
 
 ## Spec
 
@@ -68,7 +68,7 @@ Changing the Then or the observe line after Play is an amendment. Review is the 
 
 ![Details](images/desk-details.png)
 
-*Details. Feature rail, scenario with `#observe:`, sketch pane. Titles-only is taking the spec's word.*
+*Todo Details. Four greens. `#observe: GET /tasks?filter=active`. Titles-only is taking the spec's word.*
 
 ## Play
 
@@ -82,7 +82,7 @@ Same buttons on the desk. Yolo all still has to guess something concrete; empty 
 
 ![Desk loop](images/desk-loop.png)
 
-*Desk tab. Plan → Details → Language → Tests → Run → Build → Idle. Now / Up next / Just wrote.*
+*Todo after 4/4. Just wrote names the last job’s model (`qwen3:0.6b` here).*
 
 When the board is n/n, Play parks: `Done — n/n scenarios are green`. Greens that never went red are called out.
 
@@ -99,7 +99,7 @@ shalt tree
 
 ![Tests](images/desk-tests.png)
 
-*Tests tab. Bound files, or pending. Pending is not green.*
+*Todo `tasks.steps.js`. Then is `fetch(this.baseUrl + '/tasks?filter=active')`. Pending is not green.*
 
 ## Diagrams
 
@@ -122,7 +122,7 @@ graph LR
 
 ![Inbox, narrow](images/desk-inbox-phone.png)
 
-Same catalog. Keys stay in the sidebar — don't paste them into tickets.
+Same catalog. Subtitle is the live model. Keys stay in the sidebar — don't paste them into tickets.
 
 ## If it sits there
 

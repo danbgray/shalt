@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-22
 **Status:** draft, awaiting review
-**Repo:** this repository (`github.com/rivletio/shalt`)
+**Repo:** this repository (`github.com/danbgray/shalt`)
 
 ## Goal
 

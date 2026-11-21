@@ -96,8 +96,9 @@ pub use markups::{
 };
 pub use mockups::{
     assemble_mockup, design_needed, ensure_thumb, films, frame_is_drawn, html_to_thumb_svg,
-    is_html_document, kit_has_platform, kit_platform, load_kit, mockup_inject, normalize_platform,
-    pick_design_journey,
+    is_html_document, kit_has_platform, kit_platform, load_kit, looks_like_design_dump,
+    looks_like_platform_question, mockup_inject, normalize_design_dumps, normalize_platform,
+    persist_kit_platform, pick_design_journey, seed_undrawn_films,
     normalize_rel, promote_final_if_green, promote_sketch_to_final, refresh_thumbs, thumb_rel,
     verify_mockups, DesignKit, Film, Frame, SKETCH_CSS,
 };

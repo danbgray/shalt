@@ -1,7 +1,7 @@
 use shalt_core::config::init_workspace;
 use shalt_core::scaffold::{
     apply_js_contract_stubs, apply_step_stubs, archive_src, fill_all_js_pending_oracles,
-    fill_js_pending_oracles, is_fillable_stub,
+    fill_js_pending_oracles, fill_js_server, fill_js_store_if_stub, is_fillable_stub,
     parse_js_contract, quarantine_duplicate_step_files, steps_source_ok, write_js_world_if_missing,
 };
 use shalt_core::list_step_files;
@@ -64,6 +64,128 @@ fn contract_stubs_fill_missing_modules_and_skip_real_code() {
 }
 
 #[test]
+fn http_observe_fills_fetch_then() {
+    let t = TempDir::new().unwrap();
+    std::fs::write(
+        t.path().join("shalt.toml"),
+        "[project]\nstack = \"javascript\"\n[zones]\nsteps = \"steps\"\nsrc = \"src\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(t.path().join("spec")).unwrap();
+    std::fs::create_dir_all(t.path().join("steps")).unwrap();
+    std::fs::write(
+        t.path().join("spec/sharing.feature"),
+        r#"@epic:sharing
+Feature: Public recipe link
+  Scenario: Anyone opens a public recipe without an account
+    Given a public recipe "Weeknight Tomato Pasta" at "/r/weeknight-tomato-pasta"
+    When an anonymous viewer opens "/r/weeknight-tomato-pasta"
+    Then they see title "Weeknight Tomato Pasta"
+    #observe: unsigned GET of /r/weeknight-tomato-pasta shows title Weeknight Tomato Pasta
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        t.path().join("steps/sharing.steps.js"),
+        concat!(
+            "import { Given, When, Then } from '@cucumber/cucumber';\n",
+            "Then('they see title {string}', function (a0) {\n  return 'pending';\n});\n",
+        ),
+    )
+    .unwrap();
+    let filled = fill_js_pending_oracles(t.path(), "sharing").unwrap();
+    assert!(!filled.is_empty(), "{filled:?}");
+    let steps = std::fs::read_to_string(t.path().join("steps/sharing.steps.js")).unwrap();
+    assert!(steps.contains("fetch("), "{steps}");
+    assert!(steps.contains("async function"), "{steps}");
+    assert!(!steps.contains("isPublic"), "{steps}");
+    assert!(
+        !steps.contains("this.baseUrl + this.lastPath ||"),
+        "fetch URL must parenthesize path or lastPath is glued onto the port\n{steps}"
+    );
+    assert!(
+        steps.contains("this.baseUrl + (this.lastPath")
+            || steps.contains("this.baseUrl + '/r/"),
+        "{steps}"
+    );
+    assert!(fill_js_server(t.path(), false).unwrap());
+    let stub = std::fs::read_to_string(t.path().join("src/server.js")).unwrap();
+    assert!(stub.contains("404"), "{stub}");
+    assert!(fill_js_server(t.path(), true).unwrap());
+    let live = std::fs::read_to_string(t.path().join("src/server.js")).unwrap();
+    assert!(live.contains("/r/"), "{live}");
+    assert!(live.contains("/tasks"), "{live}");
+    assert!(live.contains("POST") && live.contains("/recipes"), "{live}");
+    assert!(live.contains("recipePage"), "{live}");
+    assert!(live.contains("/patrons"), "{live}");
+    assert!(live.contains("data-packet"), "{live}");
+}
+
+#[test]
+fn http_observe_fills_packet_and_video_fetch() {
+    let t = TempDir::new().unwrap();
+    std::fs::write(
+        t.path().join("shalt.toml"),
+        "[project]\nstack = \"javascript\"\n[zones]\nsteps = \"steps\"\nsrc = \"src\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(t.path().join("spec")).unwrap();
+    std::fs::create_dir_all(t.path().join("steps")).unwrap();
+    std::fs::write(
+        t.path().join("spec/packets.feature"),
+        r#"@epic:ingredients
+Feature: Ingredient packets
+  Scenario: Author builds a packet with an Amazon Fresh link
+    Given I am signed in as "maya@example.com"
+    And a public recipe "Weeknight Tomato Pasta" with ingredients:
+      | name     | quantity |
+      | tomatoes | 4        |
+    When the author creates packet "sauce" from all ingredients
+    And the author attaches Amazon Fresh order link "https://fresh.amazon.com/sauce" to packet "sauce"
+    Then packet "sauce" contains 1 items
+    #observe: GET /r/weeknight-tomato-pasta includes packet sauce with 1 item
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        t.path().join("spec/video.feature"),
+        r#"@epic:video
+Feature: Recipe video timestamps
+  Scenario: Cook jumps to a tagged step
+    Given a recipe "Weeknight Tomato Pasta" owned by "maya@example.com"
+    When I tag step 1 at timestamp "00:00:12"
+    Then step 1 of "Weeknight Tomato Pasta" links to "00:00:12"
+    #observe: GET /r/weeknight-tomato-pasta shows step 1 starting at 00:00:12
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        t.path().join("steps/ingredients.steps.js"),
+        concat!(
+            "import { Given, When, Then } from '@cucumber/cucumber';\n",
+            "Then('packet {string} contains 1 items', function (a0) {\n  return 'pending';\n});\n",
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        t.path().join("steps/video.steps.js"),
+        concat!(
+            "import { Given, When, Then } from '@cucumber/cucumber';\n",
+            "Then('step 1 of {string} links to {string}', function (a0, a1) {\n  return 'pending';\n});\n",
+        ),
+    )
+    .unwrap();
+    fill_js_pending_oracles(t.path(), "ingredients").unwrap();
+    fill_js_pending_oracles(t.path(), "video").unwrap();
+    let packets = std::fs::read_to_string(t.path().join("steps/ingredients.steps.js")).unwrap();
+    assert!(packets.contains("fetch("), "{packets}");
+    assert!(!packets.contains("packetItemCount"), "{packets}");
+    let video = std::fs::read_to_string(t.path().join("steps/video.steps.js")).unwrap();
+    assert!(video.contains("fetch("), "{video}");
+    assert!(!video.contains("openStepClip"), "{video}");
+}
+
+#[test]
 fn world_template_is_written_when_steps_start_not_at_init() {
     let t = TempDir::new().unwrap();
     init_workspace(t.path(), "javascript", "cook").unwrap();
@@ -103,6 +225,9 @@ fn promote_prototype_copies_journeys_when_final_css_exists() {
     assert!(shalt_core::promote_prototype(t.path()).unwrap().is_empty() == false);
     let idx = std::fs::read_to_string(t.path().join("src/ui/index.html")).unwrap();
     assert!(idx.contains("shalt prototype app"), "{idx}");
+    let boot = std::fs::read_to_string(t.path().join("src/ui/boot.js")).unwrap();
+    assert!(boot.contains("fetch('/recipes')") || boot.contains("fetch('/tasks')"), "{boot}");
+    assert!(!boot.contains("../store.js"), "browser boot must not import node:sqlite store\n{boot}");
     let page = std::fs::read_to_string(t.path().join("src/ui/journeys/recipes/recipes.html")).unwrap();
     assert!(page.contains("Pasta"), "{page}");
     assert!(page.contains("tokens.css"), "{page}");
@@ -361,6 +486,116 @@ fn fill_js_pending_oracles_covers_vague_author_phrases() {
     assert!(t.path().join("src/store.js").is_file());
     let store = std::fs::read_to_string(t.path().join("src/store.js")).unwrap();
     assert!(store.contains("export function createRecipe"), "{store}");
+}
+
+#[test]
+fn todo_spec_does_not_get_a_recipe_store() {
+    let t = TempDir::new().unwrap();
+    std::fs::write(
+        t.path().join("shalt.toml"),
+        "[project]\nstack = \"javascript\"\n[zones]\nsteps = \"steps\"\nsrc = \"src\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(t.path().join("spec")).unwrap();
+    std::fs::create_dir_all(t.path().join("steps")).unwrap();
+    std::fs::create_dir_all(t.path().join(".shalt")).unwrap();
+    std::fs::write(
+        t.path().join(".shalt/plan.md"),
+        "A todo list. A person adds a task with a title.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        t.path().join("spec/todo.feature"),
+        r#"@epic:tasks
+Feature: Todo list
+  Scenario: Add a titled task
+    Given the list is empty
+    When I add a task titled "Buy milk"
+    Then the list shows "Buy milk" as active
+    #observe: the active list contains Buy milk
+  Scenario: Clear completed tasks
+    Given a task "Buy milk" is completed
+    When I clear completed
+    Then the list is only "Call Sam"
+    #observe: completed is empty
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        t.path().join("steps/tasks.steps.js"),
+        concat!(
+            "import { Given, When, Then } from '@cucumber/cucumber';\n",
+            "Given('the list is empty', function () {\n  return 'pending';\n});\n",
+            "When('I add a task titled {string}', function (a0) {\n  return 'pending';\n});\n",
+            "Then('the list shows {string} as active', function (a0) {\n  return 'pending';\n});\n",
+            "When('I clear completed', function () {\n  return 'pending';\n});\n",
+        ),
+    )
+    .unwrap();
+    let filled = fill_all_js_pending_oracles(t.path()).unwrap();
+    assert!(!filled.is_empty(), "{filled:?}");
+    let store = std::fs::read_to_string(t.path().join("src/store.js")).unwrap();
+    assert!(store.contains("export function addTask"), "{store}");
+    assert!(
+        store.contains("not implemented: addTask"),
+        "steps must not fill a complete store — first run should be able to go red\n{store}"
+    );
+    assert!(
+        !store.contains("export function createRecipe"),
+        "todo must not inherit the recipe store\n{store}"
+    );
+    let steps = std::fs::read_to_string(t.path().join("steps/tasks.steps.js")).unwrap();
+    assert!(steps.contains("addTask"), "{steps}");
+    assert!(!steps.contains("return 'pending'"), "{steps}");
+}
+
+#[test]
+fn recipe_store_on_a_todo_spec_is_replaced() {
+    let t = TempDir::new().unwrap();
+    std::fs::write(
+        t.path().join("shalt.toml"),
+        "[project]\nstack = \"javascript\"\n[zones]\nsteps = \"steps\"\nsrc = \"src\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(t.path().join("spec")).unwrap();
+    std::fs::create_dir_all(t.path().join("src")).unwrap();
+    std::fs::write(t.path().join("spec/todo.feature"), "Feature: Todo list\n  Scenario: Add a titled task\n    When I add a task titled \"x\"\n    Then the list shows \"x\" as active\n").unwrap();
+    std::fs::write(
+        t.path().join("src/store.js"),
+        "export function createRecipe() {}\nexport function resetStore() {}\n",
+    )
+    .unwrap();
+    assert!(fill_js_store_if_stub(t.path()).unwrap());
+    let store = std::fs::read_to_string(t.path().join("src/store.js")).unwrap();
+    assert!(store.contains("addTask"), "{store}");
+    assert!(!store.contains("createRecipe"), "{store}");
+}
+
+#[test]
+fn recipe_store_missing_share_exports_is_rewritten() {
+    let t = TempDir::new().unwrap();
+    std::fs::write(
+        t.path().join("shalt.toml"),
+        "[project]\nstack = \"javascript\"\n[zones]\nsteps = \"steps\"\nsrc = \"src\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(t.path().join("spec")).unwrap();
+    std::fs::create_dir_all(t.path().join("src")).unwrap();
+    std::fs::write(
+        t.path().join("spec/recipes.feature"),
+        "Feature: Recipes\n  Scenario: Publish\n    When I create a recipe titled \"x\"\n    Then the recipe \"x\" is public\n",
+    )
+    .unwrap();
+    std::fs::write(
+        t.path().join("src/store.js"),
+        "export function createRecipe() {}\nexport function resetStore() {}\n",
+    )
+    .unwrap();
+    assert!(fill_js_store_if_stub(t.path()).unwrap());
+    let store = std::fs::read_to_string(t.path().join("src/store.js")).unwrap();
+    assert!(store.contains("export function isPublic"), "{store}");
+    assert!(store.contains("export function openShareUrl"), "{store}");
+    assert!(store.contains("export function attachAmazonFreshLink"), "{store}");
 }
 
 #[test]

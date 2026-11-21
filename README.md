@@ -1,44 +1,101 @@
 # Shalt
 
-English in. Spec, tests, and code out. **Green** means a bound test passed against the current wording of a scenario — not that an agent agreed with itself.
+English in. Spec, tests, and a running app out.
 
-[MIT](LICENSE). [github.com/danbgray/shalt](https://github.com/danbgray/shalt)
+**Green** is a bound test that passed against the current wording of a scenario — not an agent agreeing with itself. After every Then the spec names a **door** (`#observe:`). For the benches on this page that door is HTTP: `GET /tasks`, `GET /r/{id}`. A Then that asks the in-memory store is not that door.
 
-`shalt` is a Rust CLI. `shalt ui` is the same engine on `127.0.0.1` (default port 7700). Writers: Grok (`XAI_API_KEY`) or local Qwen via Ollama.
+Play writes the tests and the code in **zones**. The test writer cannot see `src/`. The implementer cannot see the step files. Isolation is the filesystem, not a prompt.
 
-```bash
-cargo test -p shalt-core --offline
-cargo run -p shalt -- --help
-shall --yes total invoices exactly in the customer's currency
-shalt ui
-```
+Yolo all takes guesses so Play does not sit on every colour question. Correct is for the **answer**, not a rephrased question. One project Plays at a time.
 
-`shall <sentence>` is `shalt do`. `--yes` accepts every scenario. `examples/invoice/demo.sh` is the offline loop (no API key). `examples/rust-billing` is cucumber-rs. `examples/recipe-share` is a Play snapshot (spec + wireframes).
+[MIT](LICENSE) · [github.com/danbgray/shalt](https://github.com/danbgray/shalt) · **[Manual](docs/manual.md)** · [limitations](docs/limitations.md)
 
-**[Manual](docs/manual.md)** — desk screenshots, the Play loop, `#observe:`.
+Local writers below: Ollama Qwen. Grok/OpenAI/Anthropic exist in the binary; they did not write these benches.
 
-Also: [architecture](docs/architecture.md) · [isolation](docs/isolation.md) · [ledger](docs/ledger.md) · [identity](docs/identity.md) · [runners](docs/runners.md) · [CLI](docs/cli.md) · [limitations](docs/limitations.md) · [index](docs/README.md)
+## What it looks like
 
-## Why "shalt"
+![Inbox](docs/images/desk-inbox.png)
 
-Requirements have used **"the system shall…"** for a long time. [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119) makes SHALL an absolute requirement. [EARS](https://alistairmavin.com/ears/) is built on that verb.
+*Inbox. Todo parked **4/4**. Recipe share **failed** — `qwen3:8b` stepwright wrote `src/store.js` (outside `steps/`). Isolation held. Envelope paused on purpose.*
 
-This tool is that word aimed at the system. A spec is not a claim about what is true. It is an obligation. The ledger records which obligations still hold **against those words**. Reword the scenario and the old green is discharged — it goes stale.
+![Inbox, phone](docs/images/desk-inbox-phone.png)
 
-## The problem
+*Same catalog, narrow.*
 
-An agent that writes the spec, the tests, and the implementation can always go green. That is self-graded homework. Shalt takes the shortcuts away in the filesystem, not in the prompt.
+![Details](docs/images/desk-details.png)
+
+*Todo Details. Four greens. `#observe: GET /tasks?filter=active includes Buy milk`. The sketch pane is the journey. Review is the sentences **plus** the Then bodies.*
+
+![Tests](docs/images/desk-tests.png)
+
+*`steps/tasks.steps.js`. The Then is `fetch(this.baseUrl + '/tasks?filter=active')` — cucumber starts `src/server.js`. Given/When still call the store; the door is the GET.*
+
+![Desk](docs/images/desk-loop.png)
+
+*Play loop: Plan → Details → Language → Tests → Run → Build → Idle. Last job **`qwen3:0.6b`**, green. 4 upheld.*
+
+![Todo sketch](docs/images/wire-todo-tasks.png)
+
+*Journey screen (sketch kit, spec rids). Not a gold UI. The tests do not grade how it looks.*
+
+![New project](docs/images/desk-new.png)
+
+*`What shall it do?` Specify writes the spec. Play is later. Dropdown here is **`qwen3:0.6b`**, the bottom of the write lane — not a promise.*
+
+![Recipe share, failed write](docs/images/desk-recipe-plan.png)
+
+*Recipe share after 8b dumped outside its zone. Yolo already took Desktop and a pile of guesses. Ingredients 1/1 on the bar is not 6/6 HTTP greens.*
+
+## The idea
+
+An agent that writes the spec, the tests, and the implementation can always go green. That is self-graded homework.
+
+Shalt splits the work so those shortcuts fail in the tree:
 
 | Failure | What it looks like | Defence |
 |---|---|---|
 | Tampering | Implementer edits the tests | Zones + write guard |
 | Overfitting | Implementer special-cases the examples it saw | `@holdout` scenarios |
-| Weak oracle | Then title is fine; the body does the When or `assert.ok(this.…)` | `#observe:` in the spec, Then-body lint, mutation |
+| Weak oracle | Then title is fine; the body does the When or `assert.ok(this.…)` | `#observe:` locked before Play; Then-body lint; HTTP GET when the observe says GET |
 | Drift | Spec moved; suite still green | Status bound to a canonical hash |
 
-A human reading **only the sentences** is taking the spec's word. Review is sentences **plus** the Then bodies. Details shows both. `shalt verify` flags a Then that acts instead of observing.
+First suite colour is recorded. **Red then green** is evidence. Never-red is a suspicion — the tool filled both sides.
 
-## Zones
+`#observe:` is a spec comment (not a markdown heading). Cucumber ignores it. Play refuses a Then without it. Changing Then or observe after Play is an amendment.
+
+A human reading **only the sentences** is taking the spec's word. Details shows the Then bodies. `shalt verify` flags a Then that acts instead of observing, or that ignores an HTTP observe.
+
+## This run — 26–27 Sep 2026, local Ollama
+
+Write lane Play hops:
+
+`qwen3:0.6b` → `qwen3:1.7b` → `qwen3.5:2b-mlx` → `qwen3:4b` → `qwen3:8b`
+
+Author and tests skip flash when they can. A dump hops up. 0.6b still shows up as keep-alive and as the last Todo build job.
+
+No Grok. No Claude. Plan tiles for `qwen3.8:27b-mlx` / `claude-sonnet-4-5` with **0 tokens** did not write.
+
+### Todo — 4/4, red then green, GET /tasks
+
+Interview: add a titled task, mark done, filter, clear. Session only. JavaScript. Yolo all.
+
+| Stage | Model | What landed |
+|---|---|---|
+| Author | (seed) | 2b–8b dump on older runs. This run: spec **seeded from the interview**, `#observe:` is GET `/tasks`. |
+| Design | `qwen3.5:2b-mlx` | Sketch journey. Dumps get replaced with spec-rid fragments. |
+| Tests | `qwen3:0.6b` | Writer skipped once oracles bound. Thens are `fetch`. |
+| Run | cucumber-js | First colour **red** (404 server). Then **green** after Build. |
+| Build | `qwen3:0.6b` | Fills `src/store.js` + `src/server.js` (`GET /tasks`, sqlite `.shalt/app.sqlite`). |
+
+cucumber-js: 4 scenarios, 14 steps, pass. `never_red` count **0**.
+
+### Recipe share — not there yet
+
+Spec seeded (6 scenarios), including `unsigned GET of /r/weeknight-tomato-pasta`. Design drew. **`qwen3:8b` stepwright wrote `src/store.js`** and Play stopped. Isolation is doing its job; yolo-all has not reached `GET /r/{id}` on this run.
+
+## How Play is supposed to work
+
+Roles run in **stages**. Each stage only contains what that role may read.
 
 | Zone | Writer | Readers |
 |---|---|---|
@@ -48,83 +105,55 @@ A human reading **only the sentences** is taking the spec's word. Review is sent
 | `contract/` | stepwright | implementer |
 | `src/` | implementer | implementer, test runner |
 
-Each role runs in a **stage** that only contains what it may read. The stepwright cannot see `src/`. The implementer cannot see step definitions — it gets the spec, the contract, and failing output.
+The stepwright cannot see `src/`. The implementer cannot see step definitions. A write outside the zone is rejected and rolled back.
 
-A turn that writes outside its zone is rejected and rolled back. Isolation is three layers: the stage is outside the workspace, the stage is scanned (including symlinks), and the real tree is hashed before and after. Tests go through `run_role` with a hostile backend, not the guard helper.
+Play hops the write lane when a model dumps. A bigger model is not a better product. 8b still fails to author Feature/Scenario from a todo interview, and still walks out of `steps/`.
+
+## Quick start
+
+```bash
+cargo test -p shalt-core --offline
+cargo install --path crates/shalt --force
+shalt --help
+shalt ui
+```
+
+`shalt ui` is the same engine on `127.0.0.1` (default 7700, next free 7700–7799). One desk.
+
+```bash
+shall --yes total invoices exactly in the customer's currency
+```
+
+`shall <sentence>` is `shalt do`. `--yes` accepts every scenario. `examples/invoice/demo.sh` is the offline loop (no API key). `examples/rust-billing` is cucumber-rs.
+
+```
+shalt org yolo ID all    # take guesses — a setting, not a virtue
+shalt org play ID
+shalt org pause ID
+```
+
+One project Plays at a time. Pause the others.
 
 ## Spec
 
-At approval, every scenario is stamped:
+At Play, every scenario is stamped:
 
 ```
-  @rid:S-b291b8fd
-  Scenario: An invoice with a single line item
-    When I add a line of "10.00"
-    Then the total is "10.00"
-    #observe: printed total equals 10.00
+  @rid:S-6d147c6d
+  Scenario: Add a titled task
+    Given the list is empty
+    When I add a task titled "Buy milk"
+    Then the list shows "Buy milk" as active
+    #observe: GET /tasks?filter=active includes Buy milk
 ```
 
-`#observe:` is the door, locked before Play — same idea as a published hash vector. Changing the Then or the observe line after Play is an amendment, not a silent edit.
-
-Statuses: `pending` (no bound test — **never green**), `red`, `green` (bound pass against current hash), `stale` (was green; wording changed), `orphan` (gone from the spec). First suite colour is recorded: red then green is evidence; a green that never went red is a suspicion.
+Statuses: `pending` (no bound test — **never green**), `red`, `green` (bound pass against current hash), `stale` (was green; wording changed), `orphan` (gone from the spec).
 
 ## Language
 
-The ledger and guards do not care what language the SUT is. The runner lives in `shalt.toml`:
-
-```toml
-[runner]
-command = "npx cucumber-js {spec} --import {steps}/**/*.js --format message:{report}"
-format  = "cucumber-messages"
-report  = ".shalt/messages.ndjson"
-```
-
-`@rid:` is a tag. It survives into Cucumber-family reports, so binding a result does not need filename matching. Init defaults to **Rust** (cucumber-rs). **JavaScript** (cucumber-js) is supported. Other stacks may run if they emit Cucumber JSON or Messages; those presets are not finished.
-
-`examples/rust-billing` is a real Cargo project on cucumber-rs. It found a tag-spelling miss (`rid:` vs `@rid:`) and a stale-binary mutation hazard. Both have regression tests.
+The runner lives in `shalt.toml`. Init defaults to **Rust** (cucumber-rs). **JavaScript** (cucumber-js) is supported. Other stacks may run if they emit Cucumber JSON or Messages; those presets are not finished.
 
 A scenario is green only if **every** step passed. Skipped, pending, undefined, and ambiguous are not passes.
-
-## Play
-
-`shalt play` / `shalt org play ID` / the desk **Play** button: author → design → tests → run → build until the board is n/n. Then Play **parks** (`Done — n/n scenarios are green`). Sitting idle with Play still on was a loop bug.
-
-Yolo (`shalt org yolo ID all`) takes guesses instead of asking. That is a setting, not a virtue.
-
-## UI
-
-One desk. If 7700 is taken, the next free port in 7700–7799. `--port` only when nothing is running. Logs: `~/.shalt/ui.log`.
-
-```
-shalt ui
-shalt ui --foreground
-shalt ui restart
-shalt stop
-```
-
-Keys (Grok, OpenAI, Anthropic) live in the sidebar **Keys** panel → `~/.shalt/config.toml`. They are never printed. Env vars win if set.
-
-macOS: `./scripts/macos-install.sh` puts Shalt.app in Applications and `shalt` on PATH. That is a window around the same desk, not a second product.
-
-![Desk inbox](docs/images/desk-inbox.png)
-
-*Catalog. One Play at a time. Recipe share failed a zone write (stepwright tried `src/`) — isolation held.*
-
-![New project](docs/images/desk-new.png)
-
-*`What shall it do?` Specify writes the spec. Play is later.*
-
-![Details](docs/images/desk-details.png)
-
-*Details: Feature rail, `#observe:`, sketch. Review is sentences plus Then bodies.*
-
-![Tests](docs/images/desk-tests.png)
-
-*Tests tab. Bound step files, not an empty pane.*
-
-![Play loop](docs/images/desk-loop.png)
-
-*Desk tab. Plan → Details → Language → Tests → Run → Build → Idle.*
 
 ## Commands
 
@@ -154,45 +183,25 @@ shalt ui / shalt org / shalt board / shalt job
 
 `--model` and `--base-url` override. Tools are `list_files`, `read_file`, `write_file`, `done` — no shell. Paths resolve inside the stage; absolute paths and traversal are refused.
 
+Keys live in the sidebar **Keys** panel → `~/.shalt/config.toml`. They are never printed. Env vars win if set.
+
 ## What this does not prove
 
-See [limitations.md](docs/limitations.md). Short version: Feature/Scenario is a poor language for latency, cost, security, and how a UI feels. Holdouts and mutation **sample**. A Then that never went red is not evidence. Nobody reading the spec makes the human gate decorative.
-
-## Example: recipe share
-
-Play snapshot in [`examples/recipe-share`](examples/recipe-share). Spec with `#observe:`, cucumber-js steps, in-memory store, and the HTML wireframes design actually drew.
-
-Sketch of writing a recipe (`mockups/archive-sketches/journeys/recipes/recipes.html`):
-
-![Create a recipe wireframe](docs/images/wire-recipes-sketch.png)
-
-Ingredient packets / Amazon Fresh (`mockups/archive-sketches/journeys/ingredients/ingredients.html`):
-
-![Ingredient packets wireframe](docs/images/wire-ingredients.png)
-
-Patronage (`mockups/archive-sketches/journeys/patrons/patrons.html`):
-
-![Patrons wireframe](docs/images/wire-patrons.png)
-
-Sharing and video sketches:
-
-![Public share wireframe](docs/images/wire-sharing.png)
-
-![Video timestamps wireframe](docs/images/wire-video.png)
-
-Treat this as what Play produced, not a gold oracle. Then bodies may still act.
+See [limitations.md](docs/limitations.md). Feature/Scenario is a poor language for latency, cost, security, and how a UI feels. Holdouts and mutation **sample**. A Then that never went red is not evidence. Todo on this page **did** go red first. Recipe share has not reached `GET /r/{id}` yet.
 
 ## Layout
 
 ```
-crates/shalt-core/      engine
-crates/shalt/           CLI + desk HTML
-crates/shalt-app/       optional macOS wrapper
-examples/invoice/         offline fixture (Python is the SUT)
+crates/shalt-core/        engine
+crates/shalt/             CLI + desk HTML
+crates/shalt-app/         optional macOS wrapper
+examples/invoice/         offline fixture
 examples/rust-billing/    cucumber-rs
-examples/recipe-share/    Play snapshot: spec, wireframes, steps, store
-docs/
+examples/recipe-share/    Play snapshot: spec, sketch-kit wireframes, steps, store
+docs/images/              desk + bench shots (models in the captions)
 ```
+
+macOS: `./scripts/macos-install.sh` puts Shalt.app in Applications. Same desk.
 
 ## License
 

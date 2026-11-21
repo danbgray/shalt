@@ -69,6 +69,52 @@ pub fn kit_has_platform(kit: &DesignKit) -> bool {
     !normalize_platform(&kit.platform).is_empty()
 }
 
+/// True when the designer is asking Phone / Tablet / Desktop.
+pub fn looks_like_platform_question(q: &str) -> bool {
+    let t = q.to_ascii_lowercase();
+    t.contains("phone") && t.contains("tablet") && t.contains("desktop")
+}
+
+/// Write `mockups/kit.json` once when yolo/human picks a platform. Models often
+/// answer and dump without persisting the kit, which restarts the interview.
+pub fn persist_kit_platform(root: &Path, answer: &str, guessed: bool) -> bool {
+    let platform = normalize_platform(answer);
+    if platform.is_empty() {
+        return false;
+    }
+    if load_kit(root).as_ref().is_some_and(kit_has_platform) {
+        return false;
+    }
+    let mut kit = load_kit(root).unwrap_or_default();
+    kit.platform = platform.to_string();
+    kit.guessed = guessed;
+    if fs::create_dir_all(root.join("mockups")).is_err() {
+        return false;
+    }
+    let body = serde_json::to_string_pretty(&kit).unwrap_or_else(|_| {
+        format!(r#"{{"platform":"{platform}","guessed":{guessed}}}"#)
+    });
+    fs::write(root.join("mockups/kit.json"), body + "\n").is_ok()
+}
+
+fn join_storyboard_frame<'a>(
+    by_rid: &BTreeMap<&str, &'a StoryboardFrameFile>,
+    json: Option<&'a StoryboardFile>,
+    rid: &str,
+    name: &str,
+) -> Option<&'a StoryboardFrameFile> {
+    if !rid.is_empty() {
+        if let Some(fr) = by_rid.get(rid).copied() {
+            return Some(fr);
+        }
+    }
+    json.and_then(|j| {
+        j.frames.iter().find(|fr| {
+            !fr.caption.trim().is_empty() && fr.caption.trim() == name
+        })
+    })
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Frame {
     pub rid: String,
@@ -215,7 +261,12 @@ pub fn films(root: &Path, features: &[Feature], ledger: &Ledger) -> Vec<Film> {
                         .iter()
                         .map(|(_f, s)| {
                             let rid = s.rid.clone().unwrap_or_default();
-                            let join = by_rid.get(rid.as_str());
+                            let join = join_storyboard_frame(
+                                &by_rid,
+                                json.as_ref(),
+                                &rid,
+                                &s.name,
+                            );
                             let file = join
                                 .map(|fr| rel_file(&journey, &fr.file))
                                 .unwrap_or_default();
@@ -275,12 +326,35 @@ fn film_needs_drawing(root: &Path, film: &Film) -> bool {
     if film.kind == "none" {
         return false;
     }
-    if load_json(root, &film.journey).is_none() {
+    let Some(json) = load_json(root, &film.journey) else {
         return true;
+    };
+    if json.kind.trim() == "none" {
+        return false;
     }
     // Wrong spec_hash used to keep Design looping the same HTML forever.
     // Stale sketches still show in the desk; Play moves on once frames exist.
-    film.frames.iter().any(|fr| !frame_is_drawn(root, fr))
+    if film.frames.iter().all(|fr| frame_is_drawn(root, fr)) {
+        return false;
+    }
+    // Models invent rids/captions (S-recipe-select). If the HTML they named
+    // is on disk, Play leaves Design instead of redrawing the same journey.
+    let on_disk = json
+        .frames
+        .iter()
+        .filter(|fr| {
+            let rel = rel_file(&film.journey, &fr.file);
+            !rel.is_empty() && root.join("mockups").join(&rel).is_file()
+        })
+        .count();
+    if on_disk > 0 {
+        return false;
+    }
+    let html = storyboard_dir(root, &film.journey).join(format!("{}.html", film.journey));
+    if html.is_file() {
+        return false;
+    }
+    true
 }
 
 /// Next journey the designer should fill. One journey per design job.
@@ -299,6 +373,169 @@ pub fn pick_design_journey(root: &Path, features: &[Feature], focus_journey: &st
         .into_iter()
         .find(|f| film_needs_drawing(root, f))
         .map(|f| f.journey)
+}
+
+/// Full documents, Arial, or invented rids — not a shalt sketch.
+pub fn looks_like_design_dump(html: &str, expected_rids: &[String]) -> bool {
+    let t = html.trim();
+    if t.is_empty() {
+        return true;
+    }
+    let lower = t.to_ascii_lowercase();
+    let has_beats = expected_rids.iter().any(|r| {
+        !r.is_empty() && t.contains(&format!("data-rid=\"{r}\""))
+    });
+    if is_html_document(html) && !has_beats {
+        return true;
+    }
+    if lower.contains("<style") && !lower.contains("--paper") {
+        return true;
+    }
+    if lower.contains("font-family: arial")
+        || lower.contains("font-family:arial")
+        || lower.contains("font-family: times")
+    {
+        return true;
+    }
+    if !has_beats && expected_rids.iter().any(|r| !r.is_empty()) {
+        return true;
+    }
+    false
+}
+
+fn seed_controls(journey: &str, name: &str) -> &'static str {
+    let j = journey.to_ascii_lowercase();
+    let n = name.to_ascii_lowercase();
+    if j.contains("task") || n.contains("task") || n.contains("todo") {
+        if n.contains("add") || n.contains("titled") {
+            return "<form data-action=\"add-task\"><label>Title <input type=\"text\" name=\"title\" placeholder=\"Buy milk\"></label> <button type=\"button\" class=\"primary\" data-action=\"add\">Add task</button></form>\n    <ul data-todo-list></ul>";
+        }
+        if n.contains("done") || n.contains("mark") {
+            return "<ul data-todo-list></ul>\n    <button type=\"button\" data-action=\"done\">Mark done</button>";
+        }
+        if n.contains("filter") {
+            return "<label>Show <select data-action=\"filter\"><option value=\"all\">All</option><option value=\"active\">Active</option><option value=\"completed\">Completed</option></select></label>\n    <ul data-todo-list></ul>";
+        }
+        if n.contains("clear") {
+            return "<ul data-todo-list></ul>\n    <button type=\"button\" data-action=\"clear\">Clear completed</button>";
+        }
+        return "<ul data-todo-list></ul>";
+    }
+    if n.contains("packet") || j.contains("ingredient") {
+        return "<label>Packet <input type=\"text\" name=\"packet\" placeholder=\"sauce\"></label>\n    <label>Amazon Fresh URL <input type=\"url\" name=\"order\" placeholder=\"https://fresh.amazon.com/sauce\"></label>\n    <button type=\"button\" class=\"primary\" data-action=\"packet\">Create packet</button>";
+    }
+    if n.contains("patron") || j.contains("patron") {
+        return "<label>Monthly <input type=\"text\" name=\"amount\" placeholder=\"$5\"></label>\n    <button type=\"button\" class=\"primary\" data-action=\"patron\">Enable patronage</button>";
+    }
+    if n.contains("video") || n.contains("timestamp") || n.contains("tag") || j.contains("video") {
+        return "<label>Timestamp <input type=\"text\" name=\"ts\" placeholder=\"00:00:12\"></label>\n    <button type=\"button\" class=\"primary\" data-action=\"tag-step\">Tag step</button>";
+    }
+    if n.contains("share") || n.contains("anonymous") || n.contains("public") || j.contains("shar") {
+        return "<p data-share-url></p>\n    <h2 data-recipe-title></h2>";
+    }
+    if n.contains("recipe") || n.contains("publish") || n.contains("ingredient") || n.contains("step") || j.contains("recipe") {
+        return "<form data-action=\"recipe\"><label>Title <input type=\"text\" name=\"title\" placeholder=\"Weeknight Tomato Pasta\"></label>\n    <label>Ingredient <input type=\"text\" name=\"ingredient\" placeholder=\"tomatoes\"></label>\n    <label>Step <input type=\"text\" name=\"step\" placeholder=\"Boil water\"></label>\n    <button type=\"button\" data-action=\"add-ingredient\">Add ingredient</button>\n    <button type=\"button\" class=\"primary\" data-action=\"publish\">Publish</button></form>\n    <p data-share-url></p>";
+    }
+    "<label>Title <input type=\"text\" name=\"title\"></label>\n    <button type=\"button\" class=\"primary\">Continue</button>"
+}
+
+fn seed_journey_html(film: &Film) -> String {
+    let mut html = String::from("<main>\n");
+    html.push_str(&format!("  <h1>{}</h1>\n", film.journey));
+    for fr in &film.frames {
+        let rid = if fr.rid.is_empty() {
+            "S-pending"
+        } else {
+            fr.rid.as_str()
+        };
+        let controls = seed_controls(&film.journey, &fr.name);
+        html.push_str(&format!(
+            "  <section data-rid=\"{rid}\">\n    <h2>{}</h2>\n    {controls}\n  </section>\n",
+            fr.name
+        ));
+    }
+    html.push_str("</main>\n");
+    html
+}
+
+fn write_storyboard(root: &Path, film: &Film) -> Option<String> {
+    let html_name = format!("{}.html", film.journey);
+    let frames: Vec<serde_json::Value> = film
+        .frames
+        .iter()
+        .map(|fr| {
+            serde_json::json!({
+                "rid": fr.rid,
+                "file": html_name,
+                "caption": if fr.caption.trim().is_empty() {
+                    fr.name.clone()
+                } else {
+                    fr.caption.clone()
+                },
+            })
+        })
+        .collect();
+    let board = serde_json::json!({
+        "journey": film.journey,
+        "kind": "ui",
+        "spec_hash": film.spec_hash,
+        "frames": frames,
+    });
+    let body = serde_json::to_string_pretty(&board).unwrap_or_else(|_| "{}".into());
+    let dir = storyboard_dir(root, &film.journey);
+    if fs::write(dir.join("storyboard.json"), body + "\n").is_ok() {
+        Some(format!(
+            "mockups/journeys/{}/storyboard.json",
+            film.journey
+        ))
+    } else {
+        None
+    }
+}
+
+/// Replace Arial dumps / invented-rid HTML with spec-shaped sketch fragments.
+/// Always rewrite storyboard.json to the spec rids.
+pub fn normalize_design_dumps(root: &Path, features: &[Feature]) -> Vec<String> {
+    let wall = films(root, features, &Ledger::default());
+    let mut wrote = Vec::new();
+    let sketch = root.join("mockups/tokens.sketch.css");
+    let sketch_body = fs::read_to_string(&sketch).unwrap_or_default();
+    if !sketch.is_file()
+        || (!sketch_body.contains("Segoe Print") && !sketch_body.contains("shalt-has-chrome"))
+    {
+        let _ = fs::create_dir_all(root.join("mockups"));
+        if fs::write(&sketch, SKETCH_CSS).is_ok() {
+            wrote.push("mockups/tokens.sketch.css".into());
+        }
+    }
+    for film in wall {
+        if film.kind == "none" || film.frames.is_empty() {
+            continue;
+        }
+        let dir = storyboard_dir(root, &film.journey);
+        if fs::create_dir_all(&dir).is_err() {
+            continue;
+        }
+        let html_name = format!("{}.html", film.journey);
+        let html_path = dir.join(&html_name);
+        let html = fs::read_to_string(&html_path).unwrap_or_default();
+        let rids: Vec<String> = film.frames.iter().map(|fr| fr.rid.clone()).collect();
+        if !html_path.is_file() || looks_like_design_dump(&html, &rids) {
+            if fs::write(&html_path, seed_journey_html(&film)).is_ok() {
+                wrote.push(format!("mockups/journeys/{}/{}", film.journey, html_name));
+            }
+        }
+        if let Some(p) = write_storyboard(root, &film) {
+            wrote.push(p);
+        }
+    }
+    wrote
+}
+
+/// Last resort after every write-lane model dumps: sketch HTML + storyboard
+/// per undrawn journey so Play can leave Design and write tests.
+pub fn seed_undrawn_films(root: &Path, features: &[Feature]) -> Vec<String> {
+    normalize_design_dumps(root, features)
 }
 
 pub fn verify_mockups(root: &Path, features: &[Feature]) -> Vec<String> {

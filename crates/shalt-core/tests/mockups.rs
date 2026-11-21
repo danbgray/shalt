@@ -644,6 +644,155 @@ fn normalize_platform_aliases() {
 }
 
 #[test]
+fn arial_dump_is_replaced_with_spec_rid_sketch() {
+    let t = TempDir::new().unwrap();
+    fs::create_dir_all(t.path().join("spec")).unwrap();
+    fs::write(
+        t.path().join("spec/todo.feature"),
+        r#"@epic:tasks
+Feature: Todo list
+  @rid:S-aabbccdd
+  Scenario: Add a titled task
+    Given the list is empty
+    When I add a task titled "Buy milk"
+    Then the list shows "Buy milk" as active
+    #observe: the active list contains Buy milk
+"#,
+    )
+    .unwrap();
+    let dir = t.path().join("mockups/journeys/tasks");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("tasks.html"),
+        r#"<!DOCTYPE html><html><head><style>body{font-family:Arial}</style></head>
+<body><h1>Tasks</h1></body></html>"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("storyboard.json"),
+        r#"{"journey":"tasks","kind":"ui","spec_hash":"x","frames":[{"rid":"S-001","file":"tasks.html","caption":"nope"}]}"#,
+    )
+    .unwrap();
+    assert!(shalt_core::looks_like_design_dump(
+        &fs::read_to_string(dir.join("tasks.html")).unwrap(),
+        &["S-aabbccdd".into()]
+    ));
+    let (features, _) = load(t.path());
+    let wrote = shalt_core::normalize_design_dumps(t.path(), &features);
+    assert!(wrote.iter().any(|p| p.ends_with("tasks.html")), "{wrote:?}");
+    let html = fs::read_to_string(dir.join("tasks.html")).unwrap();
+    assert!(html.contains("data-rid=\"S-aabbccdd\""), "{html}");
+    assert!(html.contains("data-action=\"add\""), "{html}");
+    assert!(!html.to_ascii_lowercase().contains("<!doctype"));
+    assert!(!design_needed(t.path(), &features));
+}
+
+#[test]
+fn invented_storyboard_rids_with_html_on_disk_leave_design() {
+    let t = TempDir::new().unwrap();
+    fs::create_dir_all(t.path().join("spec")).unwrap();
+    fs::write(
+        t.path().join("spec/packets.feature"),
+        r#"@epic:ingredients
+Feature: Ingredient packets
+  @rid:S-c9cd1c55
+  Scenario: Author builds a packet with an Amazon Fresh link
+    Given I am signed in as "maya@example.com"
+    When the author creates packet "sauce" from all ingredients
+    Then packet "sauce" contains 1 items
+    #observe: packet sauce item count is 1
+"#,
+    )
+    .unwrap();
+    let dir = t.path().join("mockups/journeys/ingredients");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("ingredients.html"), "<main><h1>packets</h1></main>").unwrap();
+    fs::write(
+        dir.join("storyboard.json"),
+        r#"{
+          "journey": "ingredients",
+          "kind": "ui",
+          "spec_hash": "invented",
+          "frames": [{"rid":"S-recipe-select","file":"ingredients.html","caption":"Select recipe"}]
+        }"#,
+    )
+    .unwrap();
+    let (features, _) = load(t.path());
+    assert_eq!(features[0].scenarios[0].rid.as_deref(), Some("S-c9cd1c55"));
+    assert!(
+        !design_needed(t.path(), &features),
+        "invented rids must not loop Design when the HTML is on disk"
+    );
+}
+
+#[test]
+fn caption_matched_html_clears_design_needed_without_spec_rids() {
+    let t = TempDir::new().unwrap();
+    fs::create_dir_all(t.path().join("spec")).unwrap();
+    fs::write(
+        t.path().join("spec/todo.feature"),
+        r#"@epic:tasks
+Feature: Todo list
+  Scenario: Add a titled task
+    Given the list is empty
+    When I add a task titled "Buy milk"
+    Then the list shows "Buy milk" as active
+    #observe: the active list contains Buy milk
+"#,
+    )
+    .unwrap();
+    let dir = t.path().join("mockups/journeys/tasks");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("tasks.html"), "<main><h1>Tasks</h1></main>").unwrap();
+    fs::write(
+        dir.join("storyboard.json"),
+        r#"{
+          "journey": "tasks",
+          "kind": "ui",
+          "spec_hash": "invented",
+          "frames": [{"rid":"S-001","file":"tasks.html","caption":"Add a titled task"}]
+        }"#,
+    )
+    .unwrap();
+    let (features, led) = load(t.path());
+    assert!(features[0].scenarios[0].rid.is_none());
+    let wall = films(t.path(), &features, &led);
+    assert_eq!(wall[0].frames[0].file, "journeys/tasks/tasks.html");
+    assert!(
+        !design_needed(t.path(), &features),
+        "invented storyboard rids must still count when captions match the spec"
+    );
+}
+
+#[test]
+fn persist_kit_platform_writes_once() {
+    let t = TempDir::new().unwrap();
+    assert!(shalt_core::looks_like_platform_question(
+        "Phone, Tablet, or Desktop?"
+    ));
+    assert!(shalt_core::persist_kit_platform(t.path(), "Desktop", true));
+    let kit = shalt_core::load_kit(t.path()).expect("kit");
+    assert_eq!(kit.platform, "desktop");
+    assert!(kit.guessed);
+    assert!(!shalt_core::persist_kit_platform(t.path(), "Phone", true));
+}
+
+#[test]
+fn seed_undrawn_films_clears_design_needed() {
+    let t = TempDir::new().unwrap();
+    write_spec(t.path());
+    let (features, _) = load(t.path());
+    assert!(design_needed(t.path(), &features));
+    let wrote = shalt_core::seed_undrawn_films(t.path(), &features);
+    assert!(
+        wrote.iter().any(|p| p.ends_with("envelope.html")),
+        "{wrote:?}"
+    );
+    let (features, _) = load(t.path());
+    assert!(!design_needed(t.path(), &features), "{wrote:?}");
+}
+
+#[test]
 fn mockup_inject_stubs_unmapped_paths_and_marks_the_beat() {
     let t = TempDir::new().unwrap();
     write_spec(t.path());
@@ -765,4 +914,17 @@ fn promote_sketch_to_final_copies_once() {
 #[allow(dead_code)]
 fn frame_named<'a>(frames: &'a [Frame], rid: &str) -> &'a Frame {
     frames.iter().find(|f| f.rid == rid).unwrap()
+}
+
+#[test]
+fn normalize_live_when_env_set() {
+    let Ok(root) = std::env::var("SHALT_NORMALIZE_ROOT") else {
+        return;
+    };
+    let root = std::path::Path::new(&root);
+    let features = load_specs(&root.join("spec"), false).unwrap_or_default();
+    let wrote = shalt_core::normalize_design_dumps(root, &features);
+    eprintln!("normalized {}", wrote.len());
+    let promoted = shalt_core::promote_prototype(root).unwrap_or_default();
+    eprintln!("promoted {}", promoted.len());
 }

@@ -2,7 +2,7 @@
 
 Shalt turns an English request into Feature/Scenario obligations, then drives isolated roles until those obligations hold — against the current wording, with a bound test. Green is not "the model said so."
 
-**Start here:** [manual.md](manual.md) (screenshots + how to run the desk). Local Play: [todo first slice](bench/2026-09-26-todo.md), [todo restart + movie](bench/todo-restart.md).
+**Start here:** the [README](../README.md) (results + which models wrote them), then [manual.md](manual.md). Local Play notes: [todo first slice](bench/2026-09-26-todo.md), [todo restart + movie](bench/todo-restart.md).
 
 ## Read in this order
 

@@ -137,6 +137,29 @@ fn spec_without_storyboards_is_design() {
 }
 
 #[test]
+fn play_stamps_rids_before_design() {
+    let _g = HOME.lock().unwrap();
+    let home = TempDir::new().unwrap();
+    std::env::set_var("SHALT_HOME", home.path());
+    let proj = home.path().join("money");
+    init_workspace(&proj, "javascript", "money").unwrap();
+    write_feature_only(&proj);
+    let raw = fs::read_to_string(proj.join("spec/money.feature")).unwrap();
+    assert!(!raw.contains("@rid:"), "{raw}");
+    let mut org = Org {
+        name: "local".into(),
+        projects: vec![],
+    };
+    let p = org.add(&proj).unwrap();
+    org.save().unwrap();
+    let job = continue_project(&p.id).unwrap().expect("design job");
+    assert_eq!(job.kind, JobKind::Design);
+    let stamped = fs::read_to_string(proj.join("spec/money.feature")).unwrap();
+    assert!(stamped.contains("@rid:S-"), "{stamped}");
+    std::env::remove_var("SHALT_HOME");
+}
+
+#[test]
 fn design_without_a_cloud_key_pins_a_local_writer() {
     let _g = HOME.lock().unwrap();
     let home = TempDir::new().unwrap();
@@ -213,6 +236,37 @@ fn failed_design_writer_hops_up_the_chain() {
         to.is_some_and(|i| i > from),
         "failed 2B design must hop up, got {}",
         next.model
+    );
+    std::env::remove_var("SHALT_HOME");
+}
+
+#[test]
+fn design_stall_at_top_of_lane_seeds_and_leaves_design() {
+    let _g = HOME.lock().unwrap();
+    let home = TempDir::new().unwrap();
+    std::env::set_var("SHALT_HOME", home.path());
+    let proj = home.path().join("money");
+    init_workspace(&proj, "javascript", "money").unwrap();
+    write_feature_only(&proj);
+    let mut org = Org {
+        name: "local".into(),
+        projects: vec![],
+    };
+    let p = org.add(&proj).unwrap();
+    org.save().unwrap();
+    shalt_core::spec::stamp_rids(&proj.join("spec")).unwrap();
+    assert_eq!(next_stage(&proj), Stage::Design);
+    let mut q = JobQueue::load();
+    let design = q.enqueue_full(JobKind::Design, &p.id, "", "qwen", "qwen3:8b");
+    q.set_status(&design.id, JobStatus::Failed);
+    q.set_error(&design.id, "The model didn't respond in time.");
+    q.save().unwrap();
+    let next = continue_project(&p.id).unwrap().expect("leave design");
+    assert_ne!(
+        next.kind,
+        JobKind::Design,
+        "8B stall must seed sketch, not enqueue another Design, got {:?}",
+        next.kind
     );
     std::env::remove_var("SHALT_HOME");
 }

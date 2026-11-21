@@ -27,6 +27,21 @@ Feature: View a traveler
 "#;
 
 #[test]
+fn fetch_then_with_empty_object_is_not_a_stub() {
+    let defs = parse_step_defs(
+        r#"
+Then('the recipe {string} is public', async function (a0) {
+  const headers = {};
+  const res = await fetch(this.baseUrl + '/r/x', { headers });
+  assert.equal(res.status, 200);
+});
+"#,
+    );
+    assert_eq!(defs.len(), 1);
+    assert!(!defs[0].stub, "headers = {{}} must not look like an empty function");
+}
+
+#[test]
 fn cucumber_js_binds_money_steps() {
     let defs = parse_step_defs(
         r#"
