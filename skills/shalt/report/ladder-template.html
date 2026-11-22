@@ -1,0 +1,247 @@
+<title>__PROJECT__ · Shalt Ladder</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+:root {
+  --bg:#f6f4ef; --surface:#fff; --surface-2:#efede4;
+  --fg:#1a1a1c; --muted:#6b6960; --rule:#d8d4c8;
+  --accent:#1a1a1c; --red:#b0303a; --green:#2f6b3a; --amber:#a56a16;
+  --hl:#f3e9b8; --pin:#d8b43a; --code-bg:#ecebe3;
+  --shadow: 0 10px 28px -12px rgba(26,26,28,.22), 0 2px 6px rgba(26,26,28,.08);
+  --font-sans:"Inter",ui-sans-serif,system-ui,sans-serif;
+  --font-serif:"Fraunces","Iowan Old Style",Georgia,serif;
+  --font-mono:"JetBrains Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg:#15161a; --surface:#1d1e23; --surface-2:#24252b;
+    --fg:#ececee; --muted:#9b9a94; --rule:#33343a;
+    --accent:#ececee; --red:#f07a84; --green:#86c493; --amber:#d6a85f;
+    --hl:#4a401c; --pin:#d6a85f; --code-bg:#24252b;
+    --shadow: 0 10px 28px -12px rgba(0,0,0,.55), 0 2px 6px rgba(0,0,0,.35);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"]{--bg:#15161a;--surface:#1d1e23;--surface-2:#24252b;--fg:#ececee;--muted:#9b9a94;--rule:#33343a;--accent:#ececee;--red:#f07a84;--green:#86c493;--amber:#d6a85f;--hl:#4a401c;--pin:#d6a85f;--code-bg:#24252b;--shadow:0 10px 28px -12px rgba(0,0,0,.55),0 2px 6px rgba(0,0,0,.35);color-scheme:dark}
+html,body{background:var(--bg);color:var(--fg)}
+html{overflow-x:hidden}
+body{font-family:var(--font-sans);line-height:1.5;overflow-x:hidden;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));}
+.wrap{max-width:980px;margin:0 auto;padding-block:40px 80px}
+.eyebrow{font-family:var(--font-mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:0 0 8px}
+h1{font-family:var(--font-serif);font-weight:450;font-size:clamp(28px,5vw,44px);line-height:1.05;margin:0 0 10px}
+.meta{font-family:var(--font-mono);font-size:11px;color:var(--muted);margin:0 0 24px}
+.card{background:var(--surface);border:1px solid var(--rule);border-radius:10px;padding:18px 20px;margin:16px 0;font-family:var(--font-mono);font-size:13px;line-height:1.75;overflow-x:auto}
+.card .toggle{display:inline-block;width:1.4ch;color:var(--muted);cursor:pointer;user-select:none}
+.card .count{font-size:10px;color:var(--muted);padding:1px 7px;border:1px solid var(--rule);border-radius:999px;margin-left:4px}
+.card .row{display:flex;align-items:baseline;gap:6px;padding:1px 6px;margin:0 -6px;border-radius:4px;cursor:pointer;transition:background .12s;white-space:nowrap}
+.card .row:hover{background:var(--surface-2)}
+.card .row.pinned{background:var(--hl);outline:1px solid var(--pin);outline-offset:-1px}
+.card .indent-1{padding-left:2ch} .card .indent-2{padding-left:5ch}
+.card .kw{color:var(--muted)} .card .green-tag{color:var(--green)} .card .amber-tag{color:var(--amber)} .card .red-tag{color:var(--red)}
+.card [hidden]{display:none!important}
+.term{cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;border-radius:2px;padding:0 1px;transition:background .1s,color .1s}
+.term:hover,.term:focus{background:var(--hl);color:var(--fg);outline:none}
+.term.noun{text-decoration-color:var(--muted)}
+.term.verb{text-decoration-color:var(--amber)}
+.term.protocol{text-decoration-color:var(--green);text-decoration-style:double;text-underline-offset:2px}
+#popover-scrim{position:fixed;inset:0;background:color-mix(in srgb,var(--bg) 60%,transparent);z-index:99;opacity:0;pointer-events:none;transition:opacity .12s}
+#popover-scrim.on{opacity:1;pointer-events:auto}
+#popover{position:fixed;z-index:100;min-width:260px;max-width:360px;background:var(--surface);border:1px solid var(--rule);border-radius:8px;box-shadow:var(--shadow);padding:14px 16px 12px;font-family:var(--font-mono);font-size:12px;line-height:1.55;opacity:0;visibility:hidden;transform:translateY(-4px) scale(.98);transition:opacity .11s,transform .11s}
+#popover.on{opacity:1;visibility:visible;transform:translateY(0) scale(1)}
+#popover.pinned{border-color:var(--pin);box-shadow:0 0 0 1px var(--pin),var(--shadow)}
+#popover .p-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:8px}
+#popover .p-title{font-family:var(--font-sans);font-size:14px;font-weight:600}
+#popover .p-kind{font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+#popover .p-status{font-size:10px;letter-spacing:.08em;text-transform:uppercase;font-weight:600}
+#popover .p-status.green{color:var(--green)} #popover .p-status.amber{color:var(--amber)} #popover .p-status.red{color:var(--red)}
+#popover .p-row{display:flex;gap:10px;align-items:baseline}
+#popover .p-row .k{color:var(--muted);min-width:8ch;font-size:11px}
+#popover .p-sep{border-top:1px dashed var(--rule);margin:8px 0}
+#popover .p-gwt{display:grid;grid-template-columns:7ch 1fr;gap:3px 10px;font-size:11px}
+#popover .p-gwt .g{color:var(--muted)}
+#popover .p-children-head{font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:8px 0 6px}
+#popover .p-children{display:flex;flex-direction:column;gap:3px;max-height:240px;overflow-y:auto}
+#popover .child-btn{display:flex;justify-content:space-between;align-items:center;gap:10px;text-align:left;width:100%;background:transparent;border:1px solid var(--rule);border-radius:5px;padding:5px 8px;cursor:pointer;font:inherit;color:inherit}
+#popover .child-btn:hover{background:var(--surface-2);border-color:var(--muted)}
+#popover .child-btn .c-status{font-size:9px;text-transform:uppercase}
+.c-status.green{color:var(--green)} .c-status.amber{color:var(--amber)} .c-status.red{color:var(--red)}
+#popover .p-foot{display:flex;justify-content:space-between;align-items:center;margin-top:10px;font-size:10px;color:var(--muted)}
+#popover .pin-btn{font-family:var(--font-mono);font-size:10px;background:transparent;color:var(--muted);border:1px solid var(--rule);border-radius:4px;padding:2px 8px;cursor:pointer}
+@media (max-width:560px){
+  #popover{left:0!important;right:0!important;top:auto!important;bottom:0!important;min-width:0;max-width:100%;border-radius:14px 14px 0 0;border-bottom:0;padding-bottom:calc(14px + env(safe-area-inset-bottom,0px));max-height:70vh;overflow-y:auto;transform:translateY(8%)}
+  #popover.on{transform:translateY(0)}
+}
+.empty{color:var(--muted);font-style:italic;padding:40px 0;text-align:center}
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">shalt · ladder</p>
+  <h1 id="proj-title">__PROJECT__</h1>
+  <p class="meta" id="proj-meta">generated __GENERATED_AT__</p>
+
+  <div class="card" id="doc"><div class="empty">loading…</div></div>
+</div>
+
+<div id="popover-scrim" aria-hidden="true"></div>
+<div id="popover" role="dialog" aria-hidden="true"></div>
+
+<script>
+// Project data is injected before this script by the publisher.
+// Fallback: an empty project message.
+const REPORT = window.SHALT_REPORT || { project: "(no data)", DATA: {}, vocabulary: {nouns:[],verbs:[],protocols:[]}, generated_at: "" };
+const DATA = REPORT.DATA;
+
+document.getElementById("proj-title").textContent = REPORT.project + " · Shalt Ladder";
+document.getElementById("proj-meta").textContent  = "generated " + (REPORT.generated_at || "—") + " · " + Object.values(DATA).filter(d=>d.kind==="scenario").length + " scenarios";
+
+// --- vocabulary / term wrapping ---
+const TERMS = [];
+for (const kind of ["verbs","protocols","nouns"]) {
+  for (const t of (REPORT.vocabulary[kind]||[])) {
+    const cls = kind.replace(/s$/,"");
+    for (const p of (t.patterns || [t.title])) TERMS.push([new RegExp(p, "gi"), t.ref, cls]);
+    // Ensure the ref itself is in DATA for click → popover
+    if (!DATA[t.ref]) DATA[t.ref] = { kind: cls, title: t.title, fields: t.fields || [], children: t.children || [], childrenLabel: "mentions" };
+  }
+}
+function escHtml(s){return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]))}
+function withTerms(s){
+  let out = escHtml(s);
+  const parts = out.split(/(<span class="term[^"]*"[^>]*>[^<]*<\/span>)/g);
+  for (let i=0;i<parts.length;i++){
+    if (i%2===1) continue;
+    for (const [re,ref,cls] of TERMS) {
+      parts[i] = parts[i].replace(re, m => `<span class="term ${cls}" data-ref="${ref}" tabindex="0" role="button">${m}</span>`);
+    }
+  }
+  return parts.join("");
+}
+
+// --- render the document view ---
+function rollup(ref){
+  const d = DATA[ref]; if(!d?.children?.length) return null;
+  const r = {green:0,amber:0,red:0};
+  for (const c of d.children){ const s = DATA[c]?.status; if(s) r[s]=(r[s]||0)+1 }
+  return r;
+}
+function renderDoc(){
+  const miles = Object.entries(DATA).filter(([,d])=>d.kind==="milestone");
+  if (!miles.length){ document.getElementById("doc").innerHTML = '<div class="empty">no milestones found — run `bash ~/.claude/skills/shalt/report/dump.sh` in a shalt project first</div>'; return; }
+  let html = "";
+  for (const [mref, m] of miles) {
+    const mBody = "doc-body-" + mref.replace(/[^a-z0-9]+/gi,"-");
+    html += `<div class="row" data-ref="${mref}" data-children="${mBody}">
+      <span class="toggle" data-toggle="${mBody}">▾</span>
+      <span><span class="kw">milestone:</span> <strong>${escHtml(m.title)}</strong></span>
+      <span class="count">${m.children.length} features</span>
+    </div><div id="${mBody}">`;
+    for (const fref of (m.children||[])) {
+      const f = DATA[fref]; if (!f) continue;
+      const fBody = "doc-body-" + fref.replace(/[^a-z0-9]+/gi,"-");
+      const r = rollup(fref);
+      const tag = r ? [r.green&&`<span class="green-tag">${r.green} green</span>`, r.amber&&`<span class="amber-tag">${r.amber} amber</span>`, r.red&&`<span class="red-tag">${r.red} red</span>`].filter(Boolean).join(" · ") : "";
+      html += `<hr style="border:0;border-top:1px dashed var(--rule);margin:14px 0">
+        <div class="row" data-ref="${fref}" data-children="${fBody}">
+          <span class="toggle" data-toggle="${fBody}">▸</span>
+          <span class="indent-1"><span class="kw">feature:</span> <strong>${escHtml(f.title)}</strong></span>
+          <span class="count">${(f.children||[]).length} scenarios</span>
+          ${tag?" · "+tag:""}
+        </div><div id="${fBody}" hidden>`;
+      for (const sref of (f.children||[])) {
+        const s = DATA[sref]; if(!s) continue;
+        const status = s.status || "undefined";
+        const cls = status==="green"?"green-tag":status==="amber"?"amber-tag":status==="red"?"red-tag":"kw";
+        const firstGwt = (s.gwt && s.gwt[0]) ? ` · <span class="kw">${escHtml(s.gwt[0][0])}</span> ${withTerms(s.gwt[0][1])}` : "";
+        html += `<div class="row" data-ref="${sref}">
+          <span class="indent-2"><span class="kw">scenario:</span> ${escHtml(s.title)} <span class="${cls}">${status}</span>${firstGwt}</span>
+        </div>`;
+      }
+      html += `</div>`;
+    }
+    html += `</div>`;
+  }
+  document.getElementById("doc").innerHTML = html;
+}
+renderDoc();
+
+// --- popover engine (click-only, bottom-sheet on narrow) ---
+const pop = document.getElementById("popover");
+const scrim = document.getElementById("popover-scrim");
+let openRef = null;
+const isNarrow = () => matchMedia("(max-width:560px)").matches;
+
+function renderPopover(ref){
+  const d = DATA[ref]; if(!d) return "";
+  const kind = (d.kind||"").toUpperCase() + (d.feature?" · "+d.feature:"");
+  let body = "";
+  if (d.kind==="scenario") {
+    if (d.gwt) body += `<div class="p-gwt">${d.gwt.map(([k,t])=>`<div class="g">${k}</div><div>${withTerms(t)}</div>`).join("")}</div>`;
+    const meta = [d.epic?["epic",d.epic]:null, d.last_green_at?["last green",d.last_green_at]:null].filter(Boolean);
+    if (meta.length){ body += `<div class="p-sep"></div>`; for (const [k,v] of meta) body += `<div class="p-row"><span class="k">${k}</span><span>${escHtml(v)}</span></div>`; }
+  } else {
+    for (const [k,v] of (d.fields||[])) body += `<div class="p-row"><span class="k">${k}</span><span>${withTerms(v)}</span></div>`;
+    if (d.children?.length){
+      const r = rollup(ref);
+      const sum = r ? [r.green&&`${r.green} green`,r.amber&&`${r.amber} amber`,r.red&&`${r.red} red`].filter(Boolean).join(" · "):"";
+      body += `<div class="p-children-head">${d.children.length} ${d.childrenLabel||"children"}${sum?" · "+sum:""}</div><div class="p-children">`;
+      for (const c of d.children){
+        const cd = DATA[c]; if(!cd) continue;
+        body += `<button class="child-btn" data-ref="${c}"><span>${escHtml(cd.title)}</span><span class="c-status ${cd.status||""}">${cd.status||""}</span></button>`;
+      }
+      body += `</div>`;
+    }
+  }
+  const chip = d.status ? `<span class="p-status ${d.status}">${d.status}</span>` : "";
+  return `<div class="p-head"><div><div class="p-title">${escHtml(d.title)}</div><div class="p-kind">${kind}</div></div>${chip}</div>${body}
+    <div class="p-foot"><code>${escHtml(ref)}</code><button class="pin-btn" data-action="close">Close</button></div>`;
+}
+function positionPopover(anchor){
+  const r = anchor.getBoundingClientRect(), pr = pop.getBoundingClientRect(), m=10;
+  const side = (innerHeight - r.bottom) > pr.height+m+20 ? "top" : "bottom";
+  const top = side==="top" ? r.bottom+m : r.top-pr.height-m;
+  let left = r.left + r.width/2 - pr.width/2;
+  left = Math.max(8, Math.min(left, innerWidth - pr.width - 8));
+  pop.dataset.side = side;
+  pop.style.top = top+"px"; pop.style.left = left+"px";
+}
+function showPopover(ref, anchor){
+  openRef = ref;
+  pop.innerHTML = renderPopover(ref);
+  pop.classList.add("on","pinned");
+  pop.setAttribute("aria-hidden","false");
+  if (isNarrow()){ pop.style.top=""; pop.style.left=""; scrim.classList.add("on"); }
+  else { scrim.classList.remove("on"); requestAnimationFrame(()=>positionPopover(anchor)); }
+  document.querySelectorAll("[data-ref]").forEach(el => el.classList.toggle("pinned", el.dataset.ref===ref));
+}
+function closePopover(){
+  openRef = null;
+  pop.classList.remove("on","pinned");
+  pop.setAttribute("aria-hidden","true");
+  scrim.classList.remove("on");
+  document.querySelectorAll(".pinned").forEach(el => el.classList.remove("pinned"));
+}
+function setOpen(id, open){
+  const t = document.getElementById(id); if(!t) return;
+  t.hidden = !open;
+  document.querySelectorAll(`[data-toggle="${id}"]`).forEach(el => el.textContent = open?"▾":"▸");
+}
+function isOpen(id){ const t = document.getElementById(id); return t && !t.hidden; }
+
+document.addEventListener("click", e => {
+  const tog = e.target.closest("[data-toggle]");
+  if (tog){ e.stopPropagation(); setOpen(tog.dataset.toggle, !isOpen(tog.dataset.toggle)); return; }
+  if (e.target.closest("[data-action='close']")){ e.preventDefault(); closePopover(); return; }
+  const nav = e.target.closest("#popover [data-ref]");
+  if (nav){ e.preventDefault(); const r = nav.dataset.ref; const anchor = document.querySelector(`[data-ref="${r}"]`) || nav; showPopover(r, anchor); return; }
+  const el = e.target.closest("[data-ref]");
+  if (!el){ if (openRef && !pop.contains(e.target)) closePopover(); return; }
+  e.preventDefault();
+  const row = document.querySelector(`[data-ref="${el.dataset.ref}"][data-children]`);
+  if (row) setOpen(row.dataset.children, true);
+  showPopover(el.dataset.ref, el);
+});
+document.addEventListener("keydown", e => { if (e.key==="Escape" && openRef) closePopover(); });
+addEventListener("scroll", () => { if (openRef && !isNarrow()){ const el = document.querySelector(`[data-ref="${openRef}"]`); if(el) positionPopover(el); } }, {passive:true});
+</script>

@@ -8,7 +8,7 @@ Play writes the tests and the code in **zones**. The test writer cannot see `src
 
 Yolo all takes guesses so Play does not sit on every colour question. Correct is for the **answer**, not a rephrased question. One project Plays at a time.
 
-[MIT](LICENSE) · [github.com/danbgray/shalt](https://github.com/danbgray/shalt) · **[Manual](docs/manual.md)** · [limitations](docs/limitations.md)
+[MIT](LICENSE) · [github.com/danbgray/shalt](https://github.com/danbgray/shalt) · **[Manual](docs/manual.md)** · [Agent mode](docs/agent-mode.md) · [limitations](docs/limitations.md)
 
 Local writers below: Ollama Qwen. Grok/OpenAI/Anthropic exist in the binary; they did not write these benches.
 

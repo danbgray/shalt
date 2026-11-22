@@ -1,0 +1,529 @@
+<title>__PROJECT__ · Shalt Ladder (editable)</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+:root {
+  --bg:#f6f4ef; --surface:#fff; --surface-2:#efede4;
+  --fg:#1a1a1c; --muted:#6b6960; --rule:#d8d4c8;
+  --red:#b0303a; --green:#2f6b3a; --amber:#a56a16; --pin:#d8b43a; --hl:#f3e9b8;
+  --shadow: 0 10px 28px -12px rgba(26,26,28,.22), 0 2px 6px rgba(26,26,28,.08);
+  --font-sans:"Inter",ui-sans-serif,system-ui,sans-serif;
+  --font-serif:"Fraunces","Iowan Old Style",Georgia,serif;
+  --font-mono:"JetBrains Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg:#15161a; --surface:#1d1e23; --surface-2:#24252b;
+    --fg:#ececee; --muted:#9b9a94; --rule:#33343a;
+    --red:#f07a84; --green:#86c493; --amber:#d6a85f; --pin:#d6a85f; --hl:#4a401c;
+    --shadow: 0 10px 28px -12px rgba(0,0,0,.55), 0 2px 6px rgba(0,0,0,.35);
+    color-scheme: dark;
+  }
+}
+html{overflow-x:hidden} html,body{background:var(--bg);color:var(--fg)}
+body{font-family:var(--font-sans);line-height:1.5;margin:0;overflow-x:hidden;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:980px;margin:0 auto;padding-block:40px 120px}
+.eyebrow{font-family:var(--font-mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:0 0 6px}
+h1{font-family:var(--font-serif);font-weight:450;font-size:clamp(28px,5vw,44px);line-height:1.05;margin:0 0 6px}
+.meta{font-family:var(--font-mono);font-size:11px;color:var(--muted);margin:0 0 20px}
+.banner{background:color-mix(in srgb, var(--amber) 10%, transparent);border:1px solid color-mix(in srgb, var(--amber) 40%, transparent);border-radius:8px;padding:10px 14px;margin:0 0 20px;font-family:var(--font-mono);font-size:12px;color:var(--fg);display:none}
+.banner.on{display:block}
+.banner code{background:color-mix(in srgb, var(--amber) 15%, transparent);padding:0 4px;border-radius:3px}
+.card{background:var(--surface);border:1px solid var(--rule);border-radius:10px;padding:18px 20px;margin:16px 0;font-family:var(--font-mono);font-size:13px;line-height:1.75}
+.row{display:flex;align-items:baseline;gap:6px;padding:4px 6px;margin:0 -6px;border-radius:4px;white-space:nowrap;overflow-x:auto}
+.row.milestone{font-weight:600}
+.row.feature{padding-left:2ch}
+.row.scenario{padding-left:5ch}
+.row:hover{background:var(--surface-2)}
+.row:hover .actions{opacity:1}
+.kw{color:var(--muted)}
+.count{font-size:10px;color:var(--muted);padding:1px 7px;border:1px solid var(--rule);border-radius:999px;margin-left:4px}
+.status{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-left:6px}
+.status.green{color:var(--green)}
+.status.amber{color:var(--amber)}
+.status.red{color:var(--red)}
+.status.undefined{color:var(--muted)}
+.title-editable{cursor:text;border-bottom:1px dashed transparent;padding:0 2px}
+.title-editable:hover{border-bottom-color:var(--muted)}
+.title-editable:focus{outline:none;background:var(--hl);border-bottom-color:var(--amber)}
+.actions{opacity:0;margin-left:auto;display:inline-flex;gap:4px;transition:opacity 100ms;flex-shrink:0}
+.actions button{font-family:var(--font-mono);font-size:10px;background:transparent;border:1px solid var(--rule);color:var(--muted);border-radius:4px;padding:1px 6px;cursor:pointer;line-height:1}
+.actions button:hover{color:var(--fg);border-color:var(--muted)}
+.actions button.build{color:var(--amber);border-color:color-mix(in srgb, var(--amber) 50%, transparent);font-weight:600}
+.actions button.build:hover{background:color-mix(in srgb, var(--amber) 15%, transparent)}
+.queued-pill{font-size:9px;letter-spacing:.08em;text-transform:uppercase;font-weight:600;color:var(--amber);background:color-mix(in srgb, var(--amber) 12%, transparent);border:1px solid color-mix(in srgb, var(--amber) 40%, transparent);border-radius:999px;padding:1px 7px;margin-left:6px}
+.toolbar button.copy-queue{color:var(--amber);border-color:color-mix(in srgb, var(--amber) 50%, transparent);font-weight:600;display:none}
+.toolbar button.copy-queue.on{display:inline-block}
+.toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:8px 14px;font-family:var(--font-mono);font-size:12px;color:var(--fg);box-shadow:var(--shadow);opacity:0;transition:opacity 180ms, transform 180ms;pointer-events:none;max-width:90vw;z-index:1000}
+.toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+.toast strong{color:var(--amber)}
+.actions button.del:hover{color:var(--red);border-color:var(--red)}
+.add-row{padding:4px 6px;font-size:11px;color:var(--muted)}
+.add-row button{font-family:var(--font-mono);font-size:11px;background:transparent;border:1px dashed var(--rule);color:var(--muted);border-radius:4px;padding:2px 8px;cursor:pointer}
+.add-row button:hover{color:var(--fg);border-style:solid;border-color:var(--muted)}
+.add-row.scenario{padding-left:5ch}
+.add-row.feature{padding-left:2ch}
+hr{border:0;border-top:1px dashed var(--rule);margin:12px 0}
+.toolbar{display:flex;gap:8px;margin:0 0 14px;flex-wrap:wrap}
+.toolbar button{font-family:var(--font-mono);font-size:11px;background:var(--surface);border:1px solid var(--rule);color:var(--fg);border-radius:4px;padding:4px 10px;cursor:pointer}
+.toolbar button:hover{background:var(--surface-2)}
+.toolbar .pending{margin-left:auto;font-family:var(--font-mono);font-size:11px;color:var(--amber);align-self:center;display:none}
+.toolbar .pending.on{display:inline}
+dialog{background:var(--surface);color:var(--fg);border:1px solid var(--rule);border-radius:10px;padding:0;max-width:500px;width:90vw;box-shadow:var(--shadow)}
+dialog::backdrop{background:color-mix(in srgb, var(--bg) 70%, transparent)}
+dialog form{padding:18px 20px;font-family:var(--font-sans);display:flex;flex-direction:column;gap:12px}
+dialog h2{font-family:var(--font-serif);font-weight:450;font-size:18px;margin:0}
+dialog label{font-family:var(--font-mono);font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;display:block;margin:0 0 4px}
+dialog input,dialog textarea{width:100%;box-sizing:border-box;font-family:var(--font-mono);font-size:13px;background:var(--bg);color:var(--fg);border:1px solid var(--rule);border-radius:4px;padding:6px 8px}
+dialog textarea{min-height:80px;resize:vertical}
+dialog .gwt-rows{display:flex;flex-direction:column;gap:6px}
+dialog .gwt-row{display:flex;gap:6px;align-items:flex-start}
+dialog .gwt-row select{font-family:var(--font-mono);font-size:12px;background:var(--bg);color:var(--fg);border:1px solid var(--rule);border-radius:4px;padding:6px;flex:0 0 90px}
+dialog .gwt-row input{flex:1}
+dialog .gwt-row button.remove{font-size:11px;background:transparent;border:1px solid var(--rule);color:var(--muted);border-radius:4px;padding:4px 8px;cursor:pointer;flex:0 0 auto}
+dialog .add-gwt{font-size:11px;background:transparent;border:1px dashed var(--rule);color:var(--muted);border-radius:4px;padding:4px 10px;cursor:pointer;align-self:flex-start}
+dialog .actions-row{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
+dialog button[type="submit"]{font-family:var(--font-sans);font-size:13px;background:var(--accent);color:var(--bg);background:var(--fg);color:var(--bg);border:0;border-radius:4px;padding:6px 14px;cursor:pointer;font-weight:600}
+dialog button.cancel{background:transparent;color:var(--fg);border:1px solid var(--rule);border-radius:4px;padding:6px 14px;cursor:pointer;font-family:var(--font-sans);font-size:13px}
+.empty{color:var(--muted);font-style:italic;padding:40px 0;text-align:center}
+.footer{margin-top:40px;font-family:var(--font-mono);font-size:11px;color:var(--muted);border-top:1px solid var(--rule);padding-top:16px}
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">shalt · ladder · editable</p>
+  <h1 id="proj-title">__PROJECT__</h1>
+  <p class="meta" id="proj-meta">generated __GENERATED_AT__ — edit inline, the chart saves itself</p>
+
+  <div class="banner" id="banner">
+    Changes above are <strong>not yet in <code>spec/</code></strong>. Ask the agent to apply them in chat — they'll show up in the Chart card and go through red→green from there.
+  </div>
+
+  <div class="toolbar">
+    <button type="button" data-action="add-milestone">+ Milestone</button>
+    <button type="button" class="copy-queue" id="copy-queue-btn" data-action="copy-queue">📋 Copy build queue (<span id="queue-count">0</span>)</button>
+    <span class="pending" id="pending-note">· unsaved edits</span>
+  </div>
+
+  <div class="card" id="doc"><div class="empty">loading…</div></div>
+
+  <div class="footer" id="footer-note"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<dialog id="scenario-dialog">
+  <form method="dialog" id="scenario-form">
+    <h2 id="sd-heading">New scenario</h2>
+    <div><label>Title</label><input id="sd-title" required></div>
+    <div>
+      <label>Given / When / Then</label>
+      <div class="gwt-rows" id="sd-gwt"></div>
+      <button type="button" class="add-gwt" id="sd-add-gwt">+ line</button>
+    </div>
+    <div class="actions-row">
+      <button type="button" class="cancel" id="sd-cancel">Cancel</button>
+      <button type="submit">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="feature-dialog">
+  <form method="dialog" id="feature-form">
+    <h2>New feature</h2>
+    <div><label>Title</label><input id="fd-title" required></div>
+    <div class="actions-row">
+      <button type="button" class="cancel" id="fd-cancel">Cancel</button>
+      <button type="submit">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="milestone-dialog">
+  <form method="dialog" id="milestone-form">
+    <h2>New milestone</h2>
+    <div><label>Title</label><input id="md-title" required></div>
+    <div class="actions-row">
+      <button type="button" class="cancel" id="md-cancel">Cancel</button>
+      <button type="submit">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+// =============================================================
+// Editable ladder. Declares the `artifact` capability so the page
+// persists its edits by republishing itself. Read-only viewers can
+// still see the latest state. The agent reads the published page
+// back via the Artifact tool to sync edits into spec/.
+// =============================================================
+
+const SEED = window.SHALT_REPORT || { project: "(no data)", generated_at: "", DATA: {}, vocabulary: {} };
+const DATA = structuredClone(SEED.DATA);
+let dirty = false;
+let artifact = null;
+
+document.getElementById("proj-title").textContent = SEED.project + " · Shalt Ladder";
+
+function updateMeta() {
+  const scenarios = Object.values(DATA).filter(d => d.kind === "scenario");
+  const greens = scenarios.filter(s => s.status === "green").length;
+  document.getElementById("proj-meta").textContent =
+    `${scenarios.length} scenarios · ${greens} green · generated ${SEED.generated_at || "—"}`;
+}
+
+function newId(prefix) {
+  return prefix + ":" + Math.random().toString(36).slice(2, 9);
+}
+function newRid() {
+  const hex = Array.from({length:8}, () => "0123456789abcdef"[Math.floor(Math.random()*16)]).join("");
+  return "S-" + hex;
+}
+
+// ------------ render ------------
+function escHtml(s){return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]))}
+
+function statusSummary(ref) {
+  const d = DATA[ref]; if (!d?.children?.length) return "";
+  const r = {green:0, amber:0, red:0, undef:0};
+  for (const c of d.children) {
+    const s = DATA[c]?.status || "undefined";
+    if (s === "green") r.green++;
+    else if (s === "amber") r.amber++;
+    else if (s === "red") r.red++;
+    else r.undef++;
+  }
+  return [r.green && `${r.green} green`, r.amber && `${r.amber} amber`, r.red && `${r.red} red`, r.undef && `${r.undef} pending`].filter(Boolean).join(" · ");
+}
+
+function render() {
+  const doc = document.getElementById("doc");
+  const miles = Object.entries(DATA).filter(([,d]) => d.kind === "milestone");
+  if (!miles.length) {
+    doc.innerHTML = '<div class="empty">no milestones yet — click <strong>+ Milestone</strong> above to start</div>';
+    return;
+  }
+  let html = "";
+  for (const [mref, m] of miles) {
+    html += `<div class="row milestone" data-ref="${mref}">
+      <span class="kw">milestone:</span>
+      <span class="title-editable" contenteditable="true" data-edit-ref="${mref}">${escHtml(m.title)}</span>
+      <span class="count">${(m.children||[]).length} features</span>
+      <span class="actions">
+        <button data-action="add-feature" data-milestone="${mref}">+ feature</button>
+        <button class="del" data-action="delete-milestone" data-ref="${mref}">✕</button>
+      </span>
+    </div>`;
+    for (const fref of (m.children || [])) {
+      const f = DATA[fref]; if (!f) continue;
+      const sum = statusSummary(fref);
+      html += `<div class="row feature" data-ref="${fref}">
+        <span class="kw">feature:</span>
+        <span class="title-editable" contenteditable="true" data-edit-ref="${fref}">${escHtml(f.title)}</span>
+        <span class="count">${(f.children||[]).length} scenarios</span>
+        ${sum ? `<span class="kw"> · ${sum}</span>` : ""}
+        <span class="actions">
+          <button data-action="add-scenario" data-feature="${fref}">+ scenario</button>
+          <button class="del" data-action="delete-feature" data-ref="${fref}">✕</button>
+        </span>
+      </div>`;
+      for (const sref of (f.children || [])) {
+        const s = DATA[sref]; if (!s) continue;
+        const status = s.status || "undefined";
+        const queued = !!s.build_requested;
+        html += `<div class="row scenario" data-ref="${sref}">
+          <span class="kw">scenario:</span>
+          <span class="title-editable" contenteditable="true" data-edit-ref="${sref}">${escHtml(s.title)}</span>
+          <span class="status ${status}">${status}</span>
+          ${queued ? `<span class="queued-pill" title="click Copy build queue to send to the agent">queued</span>` : ""}
+          <span class="actions">
+            <button data-action="edit-scenario" data-ref="${sref}">edit</button>
+            ${(status === "red" || status === "undefined") ? `<button class="build" data-action="build" data-ref="${sref}">${queued ? "✓ queued" : "▶ build"}</button>` : ""}
+            <button class="del" data-action="delete-scenario" data-ref="${sref}">✕</button>
+          </span>
+        </div>`;
+      }
+      html += `<div class="add-row scenario"><button data-action="add-scenario" data-feature="${fref}">+ scenario</button></div>`;
+      html += `<hr>`;
+    }
+    html += `<div class="add-row feature"><button data-action="add-feature" data-milestone="${mref}">+ feature</button></div>`;
+  }
+  doc.innerHTML = html;
+  updateMeta();
+  markDirty(dirty);
+}
+
+function markDirty(on) {
+  dirty = on;
+  document.getElementById("pending-note").classList.toggle("on", on);
+  document.getElementById("banner").classList.toggle("on", on);
+}
+
+// ------------ mutations ------------
+function addMilestone(title) {
+  const id = newId("milestone");
+  DATA[id] = { kind:"milestone", title, children:[], childrenLabel:"features", fields:[] };
+  commit();
+}
+function addFeature(milestoneRef, title) {
+  const id = newId("feature");
+  DATA[id] = { kind:"feature", title, children:[], childrenLabel:"scenarios", status:"undefined", fields:[] };
+  DATA[milestoneRef].children = [...(DATA[milestoneRef].children||[]), id];
+  commit();
+}
+function addScenario(featureRef, title, gwt) {
+  const id = "scenario:" + newRid();
+  const f = DATA[featureRef];
+  DATA[id] = {
+    kind:"scenario",
+    rid: id.slice("scenario:".length),
+    title,
+    feature: f.title,
+    gwt: gwt || [["Given",""],["When",""],["Then",""]],
+    status: "undefined",
+    parent: featureRef
+  };
+  f.children = [...(f.children||[]), id];
+  commit();
+}
+function editScenario(ref, title, gwt) {
+  const s = DATA[ref]; if (!s) return;
+  s.title = title;
+  s.gwt = gwt;
+  commit();
+}
+function updateTitle(ref, title) {
+  const d = DATA[ref]; if (!d) return;
+  if (d.title === title) return;
+  d.title = title;
+  commit();
+}
+function deleteNode(ref) {
+  if (!DATA[ref]) return;
+  for (const c of (DATA[ref].children || [])) deleteNode(c);
+  for (const d of Object.values(DATA)) {
+    if (d.children) d.children = d.children.filter(c => c !== ref);
+  }
+  delete DATA[ref];
+  commit();
+}
+function markBuild(ref) {
+  const s = DATA[ref]; if (!s) return;
+  if (s.build_requested) { s.build_requested = false; delete s.build_requested_at; }
+  else { s.build_requested = true; s.build_requested_at = new Date().toISOString(); }
+  commit();
+  updateQueueButton();
+  // Copy a single-scenario build prompt immediately
+  if (s.build_requested) {
+    const prompt = `apply the chart and build ${s.rid} (${s.title})`;
+    copyToClipboard(prompt);
+    toast(`<strong>Queued</strong> · instruction copied: <code>${escHtml(prompt)}</code> — paste into chat`);
+  } else {
+    toast(`Un-queued <code>${escHtml(s.rid)}</code>`);
+  }
+}
+
+function queuedScenarios() {
+  return Object.values(DATA).filter(d => d.kind === "scenario" && d.build_requested);
+}
+function updateQueueButton() {
+  const q = queuedScenarios();
+  const btn = document.getElementById("copy-queue-btn");
+  const count = document.getElementById("queue-count");
+  btn.classList.toggle("on", q.length > 0);
+  count.textContent = q.length;
+}
+function copyQueueToClipboard() {
+  const q = queuedScenarios();
+  if (!q.length) return;
+  const lines = [
+    "apply the chart, then build these scenarios one at a time (red → green, re-publishing the chart after each):",
+    "",
+    ...q.map(s => `  · ${s.rid}  ${s.title}`)
+  ];
+  const text = lines.join("\n");
+  copyToClipboard(text);
+  toast(`<strong>Build queue copied</strong> (${q.length} scenarios) — paste into chat`);
+}
+function copyToClipboard(text) {
+  try { navigator.clipboard.writeText(text); } catch (e) {
+    // fallback — show the text in a prompt the user can copy manually
+    try { window.prompt("Copy this to chat:", text); } catch {}
+  }
+}
+function toast(html) {
+  const el = document.getElementById("toast");
+  el.innerHTML = html;
+  el.classList.add("on");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => el.classList.remove("on"), 4200);
+}
+
+// ------------ commit (self-republish via the artifact capability) ------------
+function commit() {
+  markDirty(true);
+  render();
+  updateQueueButton();
+  publish();
+}
+let publishQueued = false, publishing = false;
+async function publish() {
+  if (!artifact) return;
+  if (publishing) { publishQueued = true; return; }
+  publishing = true;
+  try {
+    await artifact.publish(serializeDocument());
+  } catch (e) {
+    console.warn("publish failed:", e);
+  } finally {
+    publishing = false;
+    if (publishQueued) { publishQueued = false; publish(); }
+  }
+}
+
+function serializeDocument() {
+  // Rebuild a complete doctype->html->body document that, when re-opened, carries
+  // the current DATA back as window.SHALT_REPORT. The <style>/<script>/dialogs
+  // stay as published; only SHALT_REPORT changes. We clone the document and swap
+  // the inlined seed.
+  const doc = document.cloneNode(true);
+  // Reset any transient UI state in the clone
+  doc.querySelectorAll("#doc").forEach(el => el.innerHTML = '<div class="empty">loading…</div>');
+  doc.querySelectorAll(".pending.on, .banner.on").forEach(el => el.classList.remove("on"));
+  // Replace the seed script
+  const scripts = doc.querySelectorAll("script");
+  const nextReport = { ...SEED, DATA: DATA, generated_at: new Date().toISOString().replace(/\.\d{3}Z$/,"Z") };
+  for (const s of scripts) {
+    if (/SHALT_REPORT\s*=/.test(s.textContent || "")) {
+      s.textContent = "window.SHALT_REPORT = " + JSON.stringify(nextReport) + ";";
+      break;
+    }
+  }
+  // If there was no injected SHALT_REPORT (first publish from the template), add one.
+  if (![...scripts].some(s => /SHALT_REPORT\s*=/.test(s.textContent || ""))) {
+    const head = doc.head || doc.querySelector("head");
+    const first = doc.querySelector("script");
+    const inj = doc.createElement("script");
+    inj.textContent = "window.SHALT_REPORT = " + JSON.stringify(nextReport) + ";";
+    if (first) first.parentNode.insertBefore(inj, first);
+  }
+  return "<!DOCTYPE html>\n" + doc.documentElement.outerHTML;
+}
+
+// ------------ events ------------
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-action]"); if (!b) return;
+  const action = b.dataset.action;
+  if (action === "add-milestone") openMilestoneDialog();
+  else if (action === "add-feature") openFeatureDialog(b.dataset.milestone);
+  else if (action === "add-scenario") openScenarioDialog(b.dataset.feature);
+  else if (action === "edit-scenario") openScenarioDialog(null, b.dataset.ref);
+  else if (action === "build") markBuild(b.dataset.ref);
+  else if (action === "copy-queue") copyQueueToClipboard();
+  else if (action === "delete-milestone" || action === "delete-feature" || action === "delete-scenario") {
+    if (confirm(`Delete this ${action.replace("delete-","")} and everything below it?`)) deleteNode(b.dataset.ref);
+  }
+});
+
+// Title inline edit (contenteditable)
+document.addEventListener("blur", e => {
+  const el = e.target.closest("[data-edit-ref]"); if (!el) return;
+  updateTitle(el.dataset.editRef, el.textContent.trim());
+}, true);
+document.addEventListener("keydown", e => {
+  const el = e.target.closest("[data-edit-ref]"); if (!el) return;
+  if (e.key === "Enter") { e.preventDefault(); el.blur(); }
+  if (e.key === "Escape") { el.textContent = DATA[el.dataset.editRef]?.title || ""; el.blur(); }
+});
+
+// ------------ dialogs ------------
+const scenarioDialog = document.getElementById("scenario-dialog");
+const scenarioForm = document.getElementById("scenario-form");
+let editingScenario = null, pendingFeature = null;
+
+function openScenarioDialog(featureRef, editRef) {
+  editingScenario = editRef;
+  pendingFeature = featureRef;
+  const title = document.getElementById("sd-title");
+  const gwtBox = document.getElementById("sd-gwt");
+  document.getElementById("sd-heading").textContent = editRef ? "Edit scenario" : "New scenario";
+  if (editRef) {
+    const s = DATA[editRef];
+    title.value = s.title;
+    gwtBox.innerHTML = "";
+    for (const [kw, text] of (s.gwt || [["Given",""],["When",""],["Then",""]])) addGwtRow(kw, text);
+  } else {
+    title.value = "";
+    gwtBox.innerHTML = "";
+    addGwtRow("Given",""); addGwtRow("When",""); addGwtRow("Then","");
+  }
+  scenarioDialog.showModal();
+  title.focus();
+}
+function addGwtRow(kw, text) {
+  const row = document.createElement("div");
+  row.className = "gwt-row";
+  row.innerHTML = `<select><option>Given</option><option>When</option><option>Then</option><option>And</option></select>
+    <input type="text" value="${escHtml(text)}">
+    <button type="button" class="remove">✕</button>`;
+  row.querySelector("select").value = kw;
+  row.querySelector(".remove").addEventListener("click", () => row.remove());
+  document.getElementById("sd-gwt").appendChild(row);
+}
+document.getElementById("sd-add-gwt").addEventListener("click", () => addGwtRow("And",""));
+document.getElementById("sd-cancel").addEventListener("click", () => scenarioDialog.close());
+scenarioForm.addEventListener("submit", e => {
+  e.preventDefault();
+  const title = document.getElementById("sd-title").value.trim();
+  const gwt = [...document.getElementById("sd-gwt").querySelectorAll(".gwt-row")].map(r => [r.querySelector("select").value, r.querySelector("input").value]).filter(([,t]) => t.trim());
+  if (editingScenario) editScenario(editingScenario, title, gwt);
+  else if (pendingFeature) addScenario(pendingFeature, title, gwt);
+  scenarioDialog.close();
+});
+
+const featureDialog = document.getElementById("feature-dialog");
+let pendingMilestone = null;
+function openFeatureDialog(milestoneRef) {
+  pendingMilestone = milestoneRef;
+  document.getElementById("fd-title").value = "";
+  featureDialog.showModal();
+  document.getElementById("fd-title").focus();
+}
+document.getElementById("fd-cancel").addEventListener("click", () => featureDialog.close());
+document.getElementById("feature-form").addEventListener("submit", e => {
+  e.preventDefault();
+  const title = document.getElementById("fd-title").value.trim();
+  if (title && pendingMilestone) addFeature(pendingMilestone, title);
+  featureDialog.close();
+});
+
+const milestoneDialog = document.getElementById("milestone-dialog");
+function openMilestoneDialog() {
+  document.getElementById("md-title").value = "";
+  milestoneDialog.showModal();
+  document.getElementById("md-title").focus();
+}
+document.getElementById("md-cancel").addEventListener("click", () => milestoneDialog.close());
+document.getElementById("milestone-form").addEventListener("submit", e => {
+  e.preventDefault();
+  const title = document.getElementById("md-title").value.trim();
+  if (title) addMilestone(title);
+  milestoneDialog.close();
+});
+
+// ------------ boot ------------
+render();
+updateQueueButton();
+(async () => {
+  const cap = window.claude?.use ? await window.claude.use("artifact") : null;
+  if (cap) {
+    artifact = cap;
+    document.getElementById("footer-note").textContent =
+      "self-republishes on edit · the agent reads this chart back from chat to sync edits into spec/";
+  } else {
+    document.getElementById("footer-note").textContent =
+      "read-only view (artifact capability unavailable) · edits won't persist beyond this tab";
+  }
+})();
+</script>
